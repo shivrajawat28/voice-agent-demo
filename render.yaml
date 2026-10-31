@@ -8,7 +8,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: oregon
-    plan: standard
+    plan: free
     healthCheckPath: /health
     autoDeploy: false
     envVars:
@@ -36,10 +36,6 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GNANI_API_KEY
-        sync: false
-      - key: GNANI_TOKEN
-        sync: false
-      - key: GNANI_ACCESS_TOKEN
         sync: false
       - key: TEAM_REVIEW_PASSKEY
         sync: false
