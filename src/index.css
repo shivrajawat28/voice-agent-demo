@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: #0B1015;
+  color: #E2E8F0;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle, clean scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0B1015;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E293B;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Refined, non-shiny matte card styles */
+.matte-card {
+  background-color: #121820;
+  border: 1px solid #1E293B;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+.matte-card-hover {
+  transition: all 0.2s ease-in-out;
+}
+.matte-card-hover:hover {
+  background-color: #161F2A;
+  border-color: #334155;
+}
+
+/* Input styles */
+.matte-input {
+  background-color: #0D131A;
+  border: 1px solid #1E293B;
+  color: #F8FAFC;
+  transition: border-color 0.15s ease;
+}
+.matte-input:focus {
+  border-color: #10B981;
+  outline: none;
+}
+
+/* Clean animation for toasts and modals */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out forwards;
+}

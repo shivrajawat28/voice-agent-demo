@@ -1,0 +1,45 @@
+# ==============================================================================
+# FertoBot Voice Agent — Render Blueprint Staging Configuration
+# ==============================================================================
+services:
+  - type: web
+    name: fertobot-staging
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: oregon
+    plan: standard
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: HOST
+        value: "0.0.0.0"
+      - key: SIMULATION_MODE
+        value: "true"
+      - key: ACTUATION_PERMITTED
+        value: "false"
+      - key: CONVERSATION_PROVIDER
+        value: "orchestrator"
+      - key: LLM_PROVIDER
+        value: "gemini"
+      - key: LLM_MODEL
+        value: "gemini-flash-lite-latest"
+      - key: TTS_PROVIDER
+        value: "gnani"
+      - key: STT_PROVIDER
+        value: "gnani_prisma_v3"
+      - key: GNANI_TTS_HINDI_VOICE
+        value: "Nalini"
+      - key: CORS_ORIGINS
+        value: "https://fertobot-staging.onrender.com,http://localhost:5174,http://localhost:5173,http://127.0.0.1:8000"
+      # Secure secret references (managed in Render dashboard, never committed)
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GNANI_API_KEY
+        sync: false
+      - key: GNANI_TOKEN
+        sync: false
+      - key: GNANI_ACCESS_TOKEN
+        sync: false
+      - key: TEAM_REVIEW_PASSKEY
+        sync: false
