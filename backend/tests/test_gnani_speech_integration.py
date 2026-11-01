@@ -319,3 +319,167 @@ def test_secret_redaction_in_all_gnani_messages():
     redacted = config.redact_sensitive(raw_error)
     assert secret_key not in redacted
     assert "[REDACTED" in redacted
+
+
+def test_gnani_stt_interim_final_reconciliation():
+    """
+    Phase 26 STT Fix: When GNANI emits an interim transcript with the full clause
+    (e.g., 'मेरे खेत की स्थिति क्या है') followed by a final segment covering only the trailing
+    fragment (e.g., 'स्थिति'), the handler reconciles it so the full clause is preserved.
+    """
+    class MockReconcilingGnaniWS:
+        def __init__(self):
+            self.closed = False
+            self.sent_frames = []
+
+        async def send(self, data):
+            self.sent_frames.append(data)
+
+        async def __aiter__(self):
+            yield json.dumps({"type": "connected"})
+            # Interim clause
+            yield json.dumps({
+                "type": "transcript",
+                "segment_id": "seg-101",
+                "text": "मेरे खेत की स्थिति क्या है",
+                "detected_language_code": "hi-IN",
+                "is_final": False,
+            })
+            # Truncated final segment from trailing audio window
+            yield json.dumps({
+                "type": "transcript",
+                "segment_id": "seg-102",
+                "text": "स्थिति",
+                "detected_language_code": "hi-IN",
+                "is_final": True,
+                "audio_duration_ms": 1500.0,
+            })
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.closed = True
+
+    class MockClientWS:
+        def __init__(self):
+            self.accepted = False
+            self.closed = False
+            self.received_events = []
+            self._incoming = [
+                {"bytes": b"\x00\x00" * 512},
+                {"text": json.dumps({"action": "stop"})},
+            ]
+            self._incoming_idx = 0
+
+        async def accept(self):
+            self.accepted = True
+
+        async def receive(self):
+            if self._incoming_idx < len(self._incoming):
+                msg = self._incoming[self._incoming_idx]
+                self._incoming_idx += 1
+                return msg
+            await asyncio.sleep(0.5)
+            return {"text": json.dumps({"action": "cancel"})}
+
+        async def send_json(self, data):
+            self.received_events.append(data)
+
+        async def close(self, code=1000, reason=""):
+            self.closed = True
+
+    mock_ws = MockReconcilingGnaniWS()
+    handler = GnaniSTTStreamHandler(
+        api_key="valid-mock-key-12345",
+        ws_connect_override=lambda *a, **k: mock_ws,
+    )
+    client_ws = MockClientWS()
+
+    async def _test():
+        await handler.handle_client_websocket(client_ws)
+
+    asyncio.run(_test())
+
+    final_events = [e for e in client_ws.received_events if e.get("type") == "final_transcript"]
+    assert len(final_events) == 1
+    # Full clause must be preserved instead of truncated trailing single word
+    assert final_events[0]["text"] == "मेरे खेत की स्थिति क्या है"
+    assert final_events[0]["is_final"] is True
+
+
+def test_gnani_stt_interim_fallback_on_clean_stop():
+    """
+    Phase 26 STT Fix: If GNANI closes without emitting an explicit is_final=True event,
+    the latest interim transcript is automatically promoted to final_transcript.
+    """
+    class MockInterimOnlyGnaniWS:
+        def __init__(self):
+            self.closed = False
+            self.sent_frames = []
+
+        async def send(self, data):
+            self.sent_frames.append(data)
+
+        async def __aiter__(self):
+            yield json.dumps({"type": "connected"})
+            yield json.dumps({
+                "type": "transcript",
+                "segment_id": "seg-201",
+                "text": "क्या मेरी गेहूं की फसल को पानी चाहिए?",
+                "detected_language_code": "hi-IN",
+                "is_final": False,
+            })
+            # GNANI finishes stream without sending is_final: True
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.closed = True
+
+    class MockClientWS:
+        def __init__(self):
+            self.accepted = False
+            self.closed = False
+            self.received_events = []
+            self._incoming = [
+                {"bytes": b"\x00\x00" * 512},
+                {"text": json.dumps({"action": "stop"})},
+            ]
+            self._incoming_idx = 0
+
+        async def accept(self):
+            self.accepted = True
+
+        async def receive(self):
+            if self._incoming_idx < len(self._incoming):
+                msg = self._incoming[self._incoming_idx]
+                self._incoming_idx += 1
+                return msg
+            await asyncio.sleep(0.5)
+            return {"text": json.dumps({"action": "cancel"})}
+
+        async def send_json(self, data):
+            self.received_events.append(data)
+
+        async def close(self, code=1000, reason=""):
+            self.closed = True
+
+    mock_ws = MockInterimOnlyGnaniWS()
+    handler = GnaniSTTStreamHandler(
+        api_key="valid-mock-key-12345",
+        ws_connect_override=lambda *a, **k: mock_ws,
+    )
+    client_ws = MockClientWS()
+
+    async def _test():
+        await handler.handle_client_websocket(client_ws)
+
+    asyncio.run(_test())
+
+    final_events = [e for e in client_ws.received_events if e.get("type") == "final_transcript"]
+    assert len(final_events) == 1
+    assert final_events[0]["text"] == "क्या मेरी गेहूं की फसल को पानी चाहिए?"
+    assert final_events[0]["is_final"] is True
+

@@ -96,7 +96,7 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
         self.default_hinglish_voice = default_hinglish_voice or config.GNANI_TTS_HINGLISH_VOICE
         self.timeout_seconds = timeout_seconds or config.GNANI_REQUEST_TIMEOUT_SECONDS
         self._http_client = http_client
-        self._request_lock = asyncio.Lock()
+        self._persistent_client: Optional[httpx.AsyncClient] = None
         self._cache: Dict[str, Tuple[float, bytes, str]] = {}
 
     @property
@@ -240,83 +240,87 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
         payload = self.build_payload(trimmed_text, language, voice_id, speed)
         headers = self.build_headers()
 
-        async with self._request_lock:
-            # Check in-memory cache for duplicate requests
-            cache_key = f"{trimmed_text}::{language}::{voice_id}::{speed}"
-            loop = asyncio.get_running_loop()
-            now = loop.time()
-            if cache_key in self._cache:
-                cached_time, cached_bytes, cached_mime = self._cache[cache_key]
-                if now - cached_time < 300.0:  # 5 min cache
-                    return cached_bytes, cached_mime
+        # Check in-memory cache for duplicate requests
+        cache_key = f"{trimmed_text}::{language}::{voice_id}::{speed}"
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        if cache_key in self._cache:
+            cached_time, cached_bytes, cached_mime = self._cache[cache_key]
+            if now - cached_time < 300.0:  # 5 min cache
+                return cached_bytes, cached_mime
 
-            try:
-                client = self._http_client or httpx.AsyncClient(timeout=self.timeout_seconds)
-                try:
-                    response = await client.post(self.endpoint, json=payload, headers=headers)
-                    # Handle 429 rate limit with bounded backoff
-                    if response.status_code == 429:
-                        logger.warning("Gnani TTS rate limit 429 received, backing off 0.5s before bounded retry...")
-                        await asyncio.sleep(0.5)
-                        response = await client.post(self.endpoint, json=payload, headers=headers)
-                finally:
-                    if not self._http_client:
-                        await client.aclose()
+        client = self._http_client
+        if client is None:
+            if self._persistent_client is None or self._persistent_client.is_closed:
+                self._persistent_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(self.timeout_seconds, connect=5.0),
+                    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=60.0),
+                )
+            client = self._persistent_client
 
-                if response.status_code == 200:
-                    raw_content_type = response.headers.get("content-type", "")
-                    mime_type = raw_content_type.split(";")[0].strip().lower()
+        try:
+            response = await client.post(self.endpoint, json=payload, headers=headers)
+            # Handle 429 rate limit with bounded backoff
+            if response.status_code == 429:
+                logger.warning("Gnani TTS rate limit 429 received, backing off 0.5s before bounded retry...")
+                await asyncio.sleep(0.5)
+                response = await client.post(self.endpoint, json=payload, headers=headers)
 
-                    # Guard against JSON error wrapped in a 200 OK
-                    if "application/json" in mime_type:
-                        try:
-                            err_json = response.json()
-                            err_msg = err_json.get("message") or err_json.get("detail") or "Unknown API error"
-                            raise GnaniAPIError(f"Gnani TTS returned JSON error: {config.redact_sensitive(str(err_msg))}")
-                        except ValueError:
-                            raise GnaniAPIError("Gnani TTS returned unparseable JSON instead of audio.")
+            if response.status_code == 200:
+                raw_content_type = response.headers.get("content-type", "")
+                mime_type = raw_content_type.split(";")[0].strip().lower()
 
-                    # Validate payload contains audio bytes
-                    if len(response.content) < 44:
-                        raise GnaniAPIError("Gnani TTS returned empty or truncated audio payload.")
+                # Guard against JSON error wrapped in a 200 OK
+                if "application/json" in mime_type:
+                    try:
+                        err_json = response.json()
+                        err_msg = err_json.get("message") or err_json.get("detail") or "Unknown API error"
+                        raise GnaniAPIError(f"Gnani TTS returned JSON error: {config.redact_sensitive(str(err_msg))}")
+                    except ValueError:
+                        raise GnaniAPIError("Gnani TTS returned unparseable JSON instead of audio.")
 
-                    if not mime_type or not mime_type.startswith("audio/"):
-                        mime_type = "audio/wav"
+                # Validate payload contains audio bytes
+                if len(response.content) < 44:
+                    raise GnaniAPIError("Gnani TTS returned empty or truncated audio payload.")
 
-                    audio_content = response.content
-                    # Normalize unknown length markers (0xffffffff) so browsers can compute duration accurately
-                    if len(audio_content) >= 44 and audio_content[:4] == b"RIFF" and audio_content[8:12] == b"WAVE":
-                        import struct
-                        actual_data_size = len(audio_content) - 44
-                        actual_riff_size = len(audio_content) - 8
-                        audio_content = (
-                            audio_content[:4]
-                            + struct.pack("<I", actual_riff_size)
-                            + audio_content[8:40]
-                            + struct.pack("<I", actual_data_size)
-                            + audio_content[44:]
-                        )
+                if not mime_type or not mime_type.startswith("audio/"):
+                    mime_type = "audio/wav"
 
-                    self._cache[cache_key] = (now, audio_content, mime_type)
-                    return audio_content, mime_type
-
-                # Error handling with credential protection
-                if response.status_code in (401, 403):
-                    raise GnaniAuthenticationError(
-                        f"Gnani API authentication failed (HTTP {response.status_code}). "
-                        "Check GNANI_API_KEY in backend/.env."
-                    )
-                elif response.status_code == 429:
-                    raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
-                else:
-                    sanitized_error = config.redact_sensitive(response.text[:200])
-                    raise GnaniAPIError(
-                        f"Gnani TTS request failed with HTTP {response.status_code}: {sanitized_error}"
+                audio_content = response.content
+                # Normalize unknown length markers (0xffffffff) so browsers can compute duration accurately
+                if len(audio_content) >= 44 and audio_content[:4] == b"RIFF" and audio_content[8:12] == b"WAVE":
+                    import struct
+                    actual_data_size = len(audio_content) - 44
+                    actual_riff_size = len(audio_content) - 8
+                    audio_content = (
+                        audio_content[:4]
+                        + struct.pack("<I", actual_riff_size)
+                        + audio_content[8:40]
+                        + struct.pack("<I", actual_data_size)
+                        + audio_content[44:]
                     )
 
-            except (GnaniTTSException, ValueError):
-                raise
-            except Exception as exc:
-                sanitized_msg = config.redact_sensitive(str(exc))
-                logger.error(f"Gnani TTS connection error: {sanitized_msg}")
-                raise GnaniAPIError(f"Network error connecting to Gnani TTS: {sanitized_msg}") from exc
+                self._cache[cache_key] = (now, audio_content, mime_type)
+                return audio_content, mime_type
+
+            # Error handling with credential protection
+            if response.status_code in (401, 403):
+                raise GnaniAuthenticationError(
+                    f"Gnani API authentication failed (HTTP {response.status_code}). "
+                    "Check GNANI_API_KEY in backend/.env."
+                )
+            elif response.status_code == 429:
+                raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
+            else:
+                sanitized_error = config.redact_sensitive(response.text[:200])
+                raise GnaniAPIError(
+                    f"Gnani TTS request failed with HTTP {response.status_code}: {sanitized_error}"
+                )
+        except (GnaniTTSException, ValueError):
+            raise
+        except Exception as exc:
+            if client is self._persistent_client:
+                self._persistent_client = None
+            sanitized_msg = config.redact_sensitive(str(exc))
+            logger.error(f"Gnani TTS connection error: {sanitized_msg}")
+            raise GnaniAPIError(f"Network error connecting to Gnani TTS: {sanitized_msg}") from exc

@@ -85,6 +85,10 @@ describe('VoiceController with Mocked Web Speech APIs', () => {
         if (this.onstart) this.onstart();
       });
 
+      stop = vi.fn(() => {
+        if (this.onend) this.onend();
+      });
+
       abort = vi.fn(() => {
         if (this.onerror) this.onerror({ error: 'aborted' });
         if (this.onend) this.onend();
@@ -114,6 +118,7 @@ describe('VoiceController with Mocked Web Speech APIs', () => {
 
     class MockAudio {
       src = '';
+      preload = '';
       onplay: (() => void) | null = null;
       onended: (() => void) | null = null;
       onerror: ((e: any) => void) | null = null;
@@ -468,5 +473,136 @@ describe('VoiceController with Mocked Web Speech APIs', () => {
     } finally {
       (globalThis as any).Audio = origAudio;
     }
+  });
+
+  // Phase 26 Voice Pipeline Tests
+  it('configures recognition.continuous = true to prevent mid-sentence cutoff during pauses', () => {
+    const vc = new VoiceController();
+    vc.startListening();
+    expect(mockRecognitionInstance.continuous).toBe(true);
+    expect(mockRecognitionInstance.interimResults).toBe(true);
+    vc.stopListening();
+  });
+
+  it('tags transcription results with a unique utteranceId and dispatches provisional transcript on finishListening', () => {
+    let receivedPartial = '';
+    let receivedFinal = '';
+    let receivedUtteranceId: string | undefined;
+
+    const vc = new VoiceController({
+      onPartialTranscript: (text) => {
+        receivedPartial = text;
+      },
+      onTranscriptionResult: (text, utteranceId) => {
+        receivedFinal = text;
+        receivedUtteranceId = utteranceId;
+      },
+    });
+
+    vc.startListening();
+    mockRecognitionInstance.onstart();
+
+    // Simulate speech interim event
+    mockRecognitionInstance.onresult({
+      resultIndex: 0,
+      results: [
+        {
+          0: { transcript: 'मेरे खेत की स्थिति क्या है' },
+          isFinal: false,
+          length: 1,
+        },
+      ],
+    });
+
+    expect(receivedPartial).toBe('मेरे खेत की स्थिति क्या है');
+    expect(receivedFinal).toBe('');
+
+    // User clicks "Done Speaking" -> calls finishListening()
+    vc.finishListening();
+
+    // finishListening immediately dispatches the authoritative/provisional transcript as final
+    expect(receivedFinal).toBe('मेरे खेत की स्थिति क्या है');
+    expect(receivedUtteranceId).toBeDefined();
+  });
+
+  it('supports gapless preloaded audio creation and playback without stalls', () => {
+    const vc = new VoiceController();
+    const mockBlob = new Blob(['RIFFmockaudiopreload'], { type: 'audio/wav' });
+
+    // 1. Create preloaded audio element
+    const preloaded = vc.createPreloadedAudio(mockBlob);
+    expect(preloaded).toBeDefined();
+    expect(preloaded.audio).toBeDefined();
+    expect(preloaded.audio.preload).toBe('auto');
+
+    // 2. Play preloaded audio immediately
+    let onEndedCalled = false;
+    const played = vc.playPreloadedAudio(preloaded, () => {
+      onEndedCalled = true;
+    });
+
+    expect(played).toBe(true);
+    expect(vc.isSpeaking()).toBe(true);
+
+    // 3. Audio finishes playing
+    if (preloaded.audio.onended) {
+      preloaded.audio.onended(new Event('ended'));
+    }
+    expect(onEndedCalled).toBe(true);
+    expect(vc.isSpeaking()).toBe(false);
+  });
+
+  it('guarantees consecutive multi-turn independence without transcript leakage between turns', () => {
+    const turns: Array<{ text: string; utteranceId?: string }> = [];
+
+    const vc = new VoiceController({
+      onTranscriptionResult: (text, utteranceId) => {
+        turns.push({ text, utteranceId });
+      },
+    });
+
+    // --- TURN 1 ---
+    vc.startListening();
+    mockRecognitionInstance.onstart();
+
+    mockRecognitionInstance.onresult({
+      resultIndex: 0,
+      results: [
+        {
+          0: { transcript: 'मेरे खेत की स्थिति क्या है?' },
+          isFinal: true,
+          length: 1,
+        },
+      ],
+    });
+
+    vc.finishListening();
+
+    expect(turns.length).toBe(1);
+    expect(turns[0].text).toBe('मेरे खेत की स्थिति क्या है?');
+    const turn1UtteranceId = turns[0].utteranceId;
+    expect(turn1UtteranceId).toBeDefined();
+
+    // --- TURN 2 ---
+    vc.startListening();
+    mockRecognitionInstance.onstart();
+
+    mockRecognitionInstance.onresult({
+      resultIndex: 0,
+      results: [
+        {
+          0: { transcript: 'क्या मेरी गेहूं की फसल को पानी चाहिए?' },
+          isFinal: true,
+          length: 1,
+        },
+      ],
+    });
+
+    vc.finishListening();
+
+    expect(turns.length).toBe(2);
+    expect(turns[1].text).toBe('क्या मेरी गेहूं की फसल को पानी चाहिए?');
+    expect(turns[1].text).not.toContain('स्थिति');
+    expect(turns[1].utteranceId).not.toBe(turn1UtteranceId);
   });
 });

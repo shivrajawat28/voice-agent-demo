@@ -13,6 +13,7 @@ import {
   Activity,
   Layers,
   Search,
+  Loader2,
 } from 'lucide-react';
 import { TranscriptView } from './TranscriptView';
 import { UseVoiceAgentReturn } from '../hooks/useVoiceAgent';
@@ -118,6 +119,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
   } = voiceAgent;
 
   const isListening = agentState === 'listening';
+  const isFinalizing = agentState === 'finalizing';
   const isProcessing = agentState === 'processing';
 
   const quickPrompts = [
@@ -430,22 +432,51 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
             onRejectPump={rejectPumpAction}
           />
 
-          {/* Active Speaking & Listening Live VU Meter Banner */}
-          {isListening && (
-            <div className="matte-card rounded-xl p-3 border border-rose-500/40 bg-rose-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+          {/* Active Speaking & Listening / Finalizing Live VU Meter Banner */}
+          {(isListening || isFinalizing) && (
+            <div
+              className={`matte-card rounded-xl p-3 border ${
+                isFinalizing
+                  ? 'border-indigo-500/40 bg-indigo-950/20'
+                  : 'border-rose-500/40 bg-rose-950/20'
+              } flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn`}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center shrink-0 animate-pulse">
-                  <Mic className="w-4 h-4" />
+                <div
+                  className={`w-8 h-8 rounded-lg ${
+                    isFinalizing ? 'bg-indigo-600' : 'bg-rose-600'
+                  } text-white flex items-center justify-center shrink-0 ${
+                    isListening ? 'animate-pulse' : ''
+                  }`}
+                >
+                  {isFinalizing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Mic className="w-4 h-4" />
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-rose-300 uppercase tracking-wide">
-                      माइक्रोफोन सक्रिय (Listening via GNANI AI)
+                    <span
+                      className={`text-xs font-bold ${
+                        isFinalizing ? 'text-indigo-300' : 'text-rose-300'
+                      } uppercase tracking-wide`}
+                    >
+                      {isFinalizing
+                        ? 'ऑडियो विश्लेषण (Finalizing Speech...)'
+                        : 'माइक्रोफोन सक्रिय (Listening via GNANI AI)'}
                     </span>
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        isFinalizing ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-ping'
+                      }`}
+                    />
                   </div>
                   <p className="text-xs text-slate-300 italic mt-0.5">
-                    {partialTranscript || 'अपनी आवाज़ में बोलें... फ़र्टोबॉट सुन रहा है...'}
+                    {partialTranscript ||
+                      (isFinalizing
+                        ? 'अंतिम वाक्य तैयार किया जा रहा है...'
+                        : 'अपनी आवाज़ में बोलें... फ़र्टोबॉट सुन रहा है...')}
                   </p>
                 </div>
               </div>
@@ -454,16 +485,24 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
                 {/* Live VU meter bar */}
                 <div className="w-24 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
                   <div
-                    className="h-full bg-rose-500 transition-all duration-75"
+                    className={`h-full ${
+                      isFinalizing ? 'bg-indigo-500' : 'bg-rose-500'
+                    } transition-all duration-75`}
                     style={{ width: `${Math.min(100, Math.round(audioLevel * 100))}%` }}
                   />
                 </div>
 
                 <button
                   onClick={finishListening}
-                  className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                  disabled={isFinalizing}
+                  className={`px-3 py-1 rounded-lg text-white text-xs font-semibold transition-colors flex items-center gap-1 ${
+                    isFinalizing
+                      ? 'bg-indigo-700/60 opacity-80 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 cursor-pointer'
+                  }`}
                 >
-                  Done Speaking
+                  {isFinalizing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isFinalizing ? 'Finalizing...' : 'Done Speaking'}</span>
                 </button>
                 <button
                   onClick={stopOrCancel}
@@ -481,19 +520,37 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
               onClick={() => {
                 if (isListening) {
                   finishListening();
-                } else {
+                } else if (!isFinalizing && !isProcessing) {
                   startListening();
                 }
               }}
+              disabled={isFinalizing}
               className={`p-2.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                isListening
+                isFinalizing
+                  ? 'bg-indigo-700/70 text-white cursor-not-allowed'
+                  : isListening
                   ? 'bg-rose-600 text-white animate-pulse shadow-lg shadow-rose-900/50'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
-              title={isListening ? 'माइक बंद करें' : 'बोलकर पूछें (Click to speak)'}
+              title={
+                isFinalizing
+                  ? 'आवाज़ प्रोसेस हो रही है...'
+                  : isListening
+                  ? 'माइक बंद करें'
+                  : 'बोलकर पूछें (Click to speak)'
+              }
             >
-              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              {isListening && (
+              {isFinalizing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : isListening ? (
+                <MicOff className="w-4 h-4" />
+              ) : (
+                <Mic className="w-4 h-4" />
+              )}
+              {isFinalizing && (
+                <span className="text-[10px] font-bold uppercase tracking-wider">Finalizing</span>
+              )}
+              {isListening && !isFinalizing && (
                 <span className="text-[10px] font-bold uppercase tracking-wider">Listening</span>
               )}
             </button>

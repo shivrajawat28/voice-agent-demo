@@ -149,5 +149,62 @@ describe('VoiceController Gnani Speech & Audio Processing', () => {
       vc.stopGnaniStreaming();
       expect(mockWebSocket.send).toHaveBeenCalledWith(JSON.stringify({ action: 'stop' }));
     });
+
+    it('reconciles interim preview with final transcript and prevents stale session leakage', async () => {
+      const onTranscript = vi.fn();
+      const vc = new VoiceController();
+
+      const mockScriptProcessor = {
+        onaudioprocess: null as any,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      };
+      const mockSourceNode = { connect: vi.fn() };
+      const mockAudioCtx = {
+        sampleRate: 48000,
+        createMediaStreamSource: vi.fn().mockReturnValue(mockSourceNode),
+        createScriptProcessor: vi.fn().mockReturnValue(mockScriptProcessor),
+        destination: {},
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      (window as any).AudioContext = vi.fn().mockImplementation(() => mockAudioCtx);
+
+      await vc.startGnaniStreaming({
+        wsUrl: 'ws://127.0.0.1:8000/api/ws/stt',
+        onTranscript,
+      });
+
+      // 1. Receive interim transcript
+      mockWebSocket.onmessage({
+        data: JSON.stringify({
+          type: 'interim_transcript',
+          text: 'मेरे खेत की स्थिति क्या है',
+          detected_language: 'hi-IN',
+        }),
+      });
+
+      expect(onTranscript).toHaveBeenCalledWith('मेरे खेत की स्थिति क्या है', false, 'hi-IN');
+
+      // 2. User clicks finishListening
+      vc.finishListening();
+
+      // finishListening should have sent 'stop' to websocket
+      expect(mockWebSocket.send).toHaveBeenCalledWith(JSON.stringify({ action: 'stop' }));
+
+      // 3. Server sends trailing final transcript with only a fragment e.g. "स्थिति"
+      // The controller reconciles with the longer authoritative provisional transcript
+      mockWebSocket.onmessage({
+        data: JSON.stringify({
+          type: 'final_transcript',
+          text: 'स्थिति',
+          detected_language: 'hi-IN',
+        }),
+      });
+
+      // Should have dispatched the full reconciled text
+      const finalCalls = onTranscript.mock.calls.filter((call) => call[1] === true);
+      expect(finalCalls.length).toBeGreaterThan(0);
+      expect(finalCalls[finalCalls.length - 1][0]).toBe('मेरे खेत की स्थिति क्या है');
+    });
   });
 });

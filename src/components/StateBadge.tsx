@@ -14,6 +14,13 @@ export const StateBadge: React.FC<StateBadgeProps> = ({ state }) => {
           LISTENING
         </span>
       );
+    case 'finalizing':
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          FINALIZING
+        </span>
+      );
     case 'processing':
       return (
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/30">

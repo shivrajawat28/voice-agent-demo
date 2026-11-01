@@ -19,7 +19,7 @@ interface IWindowWithSpeech extends Window {
 export interface VoiceControllerCallbacks {
   onListeningStart?: () => void;
   onListeningEnd?: () => void;
-  onTranscriptionResult?: (text: string) => void;
+  onTranscriptionResult?: (text: string, utteranceId?: string) => void;
   onPartialTranscript?: (text: string) => void;
   onAudioLevel?: (level: number, waveform: Uint8Array, isSpeaking: boolean) => void;
   onSpeakingStart?: () => void;
@@ -54,6 +54,14 @@ export class VoiceController {
   private gnaniWebSocket: WebSocket | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
   private isGnaniStreaming: boolean = false;
+
+  // Phase 26 Speech Session & Utterance Tracking
+  private currentUtteranceId: string | null = null;
+  private provisionalTranscript: string = '';
+  private authoritativeTranscript: string = '';
+  private isFinalizingSession: boolean = false;
+  private hasDispatchedFinal: boolean = false;
+  private finalizeTimer: any = null;
 
   constructor(callbacks?: VoiceControllerCallbacks) {
     if (callbacks) {
@@ -343,7 +351,7 @@ export class VoiceController {
   /**
    * Initiates Speech Recognition synchronously, with background audio analyser & partial results
    */
-  public startListening(): boolean {
+  public startListening(utteranceId?: string): boolean {
     const caps = VoiceController.getCapabilities();
     if (!caps.speechRecognitionSupported) {
       this.callbacks.onError?.(
@@ -360,6 +368,16 @@ export class VoiceController {
 
     this.stopSpeaking();
     this.isExplicitlyCancelled = false;
+    this.isFinalizingSession = false;
+    this.hasDispatchedFinal = false;
+    this.provisionalTranscript = '';
+    this.authoritativeTranscript = '';
+    const activeUtterance = utteranceId || `utt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    this.currentUtteranceId = activeUtterance;
+    if (this.finalizeTimer) {
+      clearTimeout(this.finalizeTimer);
+      this.finalizeTimer = null;
+    }
 
     // Optional background mic stream for real-time waveform & RMS energy meter
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
@@ -387,12 +405,10 @@ export class VoiceController {
     try {
       const recognition = new SpeechRecClass();
       recognition.lang = this.language;
-      recognition.continuous = false;
+      // Phase 26: continuous = true ensures natural pauses mid-sentence do not abruptly terminate capture
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-
-      let recognizedText = '';
-      let hasDispatched = false;
 
       recognition.onstart = () => {
         this.isListeningActive = true;
@@ -400,26 +416,27 @@ export class VoiceController {
       };
 
       recognition.onresult = (event: any) => {
+        if (this.currentUtteranceId !== activeUtterance) return;
         let interimText = '';
         let finalText = '';
 
         for (let i = 0; i < event.results.length; i++) {
           const res = event.results[i];
           if (res.isFinal) {
-            finalText += res[0]?.transcript || '';
+            finalText += (res[0]?.transcript || '') + ' ';
           } else {
-            interimText += res[0]?.transcript || '';
+            interimText += (res[0]?.transcript || '') + ' ';
           }
         }
 
-        if (interimText.trim()) {
-          this.callbacks.onPartialTranscript?.(interimText.trim());
+        const combined = (finalText + interimText).trim();
+        if (combined) {
+          this.provisionalTranscript = combined;
+          this.callbacks.onPartialTranscript?.(combined);
         }
 
         if (finalText.trim()) {
-          recognizedText = finalText.trim();
-        } else if (interimText.trim()) {
-          recognizedText = interimText.trim();
+          this.authoritativeTranscript = finalText.trim();
         }
       };
 
@@ -451,9 +468,11 @@ export class VoiceController {
         this.isListeningActive = false;
         this.stopAudioAnalyser();
 
-        if (recognizedText && !this.isExplicitlyCancelled && !hasDispatched) {
-          hasDispatched = true;
-          this.callbacks.onTranscriptionResult?.(recognizedText);
+        if (this.currentUtteranceId === activeUtterance && !this.isExplicitlyCancelled && !this.hasDispatchedFinal) {
+          const textToDispatch = this.authoritativeTranscript || this.provisionalTranscript;
+          if (textToDispatch) {
+            this.dispatchFinalTranscript(textToDispatch, activeUtterance);
+          }
         }
 
         this.callbacks.onListeningEnd?.();
@@ -504,6 +523,7 @@ export class VoiceController {
 
   public async startGnaniStreaming(options: {
     wsUrl?: string;
+    utteranceId?: string;
     onTranscript?: (text: string, isFinal: boolean, detectedLang?: string) => void;
     onError?: (error: string, isAuthError: boolean) => void;
     onConnected?: () => void;
@@ -516,6 +536,19 @@ export class VoiceController {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       options.onError?.('Microphone access is not supported in this browser.', false);
       return false;
+    }
+
+    this.stopSpeaking();
+    this.isExplicitlyCancelled = false;
+    this.isFinalizingSession = false;
+    this.hasDispatchedFinal = false;
+    this.provisionalTranscript = '';
+    this.authoritativeTranscript = '';
+    const activeUtterance = options.utteranceId || `utt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    this.currentUtteranceId = activeUtterance;
+    if (this.finalizeTimer) {
+      clearTimeout(this.finalizeTimer);
+      this.finalizeTimer = null;
     }
 
     try {
@@ -544,13 +577,35 @@ export class VoiceController {
       };
 
       ws.onmessage = (event) => {
+        if (this.currentUtteranceId !== activeUtterance) {
+          // Stale message from previous session!
+          return;
+        }
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'final_transcript') {
-            options.onTranscript?.(data.text, true, data.detected_language);
-            this.callbacks.onTranscriptionResult?.(data.text);
-          } else if (data.type === 'transcript') {
+            // Reconcile with provisional transcript if final is only a truncated suffix
+            let finalText = (data.text || '').trim();
+            if (this.provisionalTranscript && this.provisionalTranscript.length > finalText.length) {
+              if (
+                this.provisionalTranscript.endsWith(finalText) ||
+                this.provisionalTranscript.includes(finalText) ||
+                finalText.split(/\s+/).length <= 2
+              ) {
+                finalText = this.provisionalTranscript;
+              }
+            }
+            options.onTranscript?.(finalText, true, data.detected_language);
+            this.authoritativeTranscript = finalText;
+            this.provisionalTranscript = finalText;
+            if (this.isFinalizingSession) {
+              this.dispatchFinalTranscript(finalText, activeUtterance);
+            } else {
+              this.callbacks.onPartialTranscript?.(finalText);
+            }
+          } else if (data.type === 'transcript' || data.type === 'interim_transcript') {
             options.onTranscript?.(data.text, false, data.detected_language);
+            this.provisionalTranscript = data.text;
             this.callbacks.onPartialTranscript?.(data.text);
           } else if (data.type === 'error') {
             const isAuth = data.code === 'AUTH_REQUIRED' || data.code === 401 || data.code === 403;
@@ -563,13 +618,23 @@ export class VoiceController {
       };
 
       ws.onerror = (err) => {
-        console.warn('VoiceController STT WebSocket error:', err);
-        options.onError?.('Gnani STT WebSocket error.', false);
+        if (this.currentUtteranceId === activeUtterance) {
+          console.warn('VoiceController STT WebSocket error:', err);
+          options.onError?.('Gnani STT WebSocket error.', false);
+        }
       };
 
       ws.onclose = () => {
-        this.cleanupGnaniStreaming();
-        this.callbacks.onListeningEnd?.();
+        if (this.currentUtteranceId === activeUtterance) {
+          if (this.isFinalizingSession && !this.hasDispatchedFinal) {
+            const fallbackText = this.authoritativeTranscript || this.provisionalTranscript;
+            if (fallbackText) {
+              this.dispatchFinalTranscript(fallbackText, activeUtterance);
+            }
+          }
+          this.cleanupGnaniStreaming();
+          this.callbacks.onListeningEnd?.();
+        }
       };
 
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -698,15 +763,26 @@ export class VoiceController {
       } catch {}
     }
 
-    // 3. Safety timeout: if server does not respond within 6 seconds, finalize cleanup
-    setTimeout(() => {
-      if (this.isGnaniStreaming) {
+    const targetUtterance = this.currentUtteranceId;
+    if (this.finalizeTimer) clearTimeout(this.finalizeTimer);
+    // 3. Bounded finalization timeout: if server does not respond within 1.5 seconds, dispatch provisional transcript
+    this.finalizeTimer = setTimeout(() => {
+      if (this.currentUtteranceId === targetUtterance && !this.hasDispatchedFinal) {
+        const fallback = this.authoritativeTranscript || this.provisionalTranscript;
+        if (fallback) {
+          this.dispatchFinalTranscript(fallback, targetUtterance);
+        }
         this.cleanupGnaniStreaming();
+        this.callbacks.onListeningEnd?.();
       }
-    }, 6000);
+    }, 1500);
   }
 
   public cancelGnaniStreaming(): void {
+    if (this.finalizeTimer) {
+      clearTimeout(this.finalizeTimer);
+      this.finalizeTimer = null;
+    }
     if (this.gnaniWebSocket && this.gnaniWebSocket.readyState === WebSocket.OPEN) {
       try {
         this.gnaniWebSocket.send(JSON.stringify({ action: 'cancel' }));
@@ -754,17 +830,74 @@ export class VoiceController {
    */
   public finishListening(): void {
     this.isExplicitlyCancelled = false;
+    this.isFinalizingSession = true;
+
+    // Immediately stop microphone capture so background audio is cut off
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+      } catch {}
+      this.micStream = null;
+    }
+    this.stopAudioAnalyser();
+
+    const targetUtterance = this.currentUtteranceId;
+
     if (this.isGnaniStreaming) {
       this.stopGnaniStreaming();
     } else if (this.recognitionInstance) {
       try {
         this.recognitionInstance.stop();
       } catch {}
+
+      const fallback = this.authoritativeTranscript || this.provisionalTranscript;
+      if (fallback) {
+        this.dispatchFinalTranscript(fallback, targetUtterance);
+        this.callbacks.onListeningEnd?.();
+      } else {
+        if (this.finalizeTimer) clearTimeout(this.finalizeTimer);
+        this.finalizeTimer = setTimeout(() => {
+          if (this.currentUtteranceId === targetUtterance && !this.hasDispatchedFinal) {
+            const delayedFallback = this.authoritativeTranscript || this.provisionalTranscript;
+            if (delayedFallback) {
+              this.dispatchFinalTranscript(delayedFallback, targetUtterance);
+            }
+            this.callbacks.onListeningEnd?.();
+          }
+        }, 1000);
+      }
     }
+  }
+
+  public dispatchFinalTranscript(text: string, utteranceId?: string | null): void {
+    if (this.hasDispatchedFinal || this.isExplicitlyCancelled) {
+      return;
+    }
+    if (utteranceId && this.currentUtteranceId && utteranceId !== this.currentUtteranceId) {
+      return;
+    }
+    const clean = text.trim();
+    if (!clean) {
+      return;
+    }
+    this.hasDispatchedFinal = true;
+    if (this.finalizeTimer) {
+      clearTimeout(this.finalizeTimer);
+      this.finalizeTimer = null;
+    }
+    this.callbacks.onTranscriptionResult?.(clean, utteranceId || this.currentUtteranceId || undefined);
   }
 
   public stopListening(): void {
     this.isExplicitlyCancelled = true;
+    this.isFinalizingSession = false;
+    this.currentUtteranceId = null;
+    this.provisionalTranscript = '';
+    this.authoritativeTranscript = '';
+    if (this.finalizeTimer) {
+      clearTimeout(this.finalizeTimer);
+      this.finalizeTimer = null;
+    }
     if (this.isGnaniStreaming) {
       this.cancelGnaniStreaming();
     }
@@ -782,6 +915,79 @@ export class VoiceController {
     }
     this.stopAudioAnalyser();
     this.isListeningActive = false;
+  }
+
+  /**
+   * Preloads an audio blob for seamless gapless queue playback
+   */
+  public createPreloadedAudio(blob: Blob): { audio: HTMLAudioElement; url: string } {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.preload = 'auto';
+    return { audio, url };
+  }
+
+  public playPreloadedAudio(
+    audioData: { audio: HTMLAudioElement; url: string },
+    onEndCallback?: () => void,
+    onErrorCallback?: (err: any) => void,
+    onStartCallback?: () => void
+  ): boolean {
+    this.stopSpeaking();
+    this.isExplicitlyCancelled = false;
+
+    const { audio, url } = audioData;
+    this.currentAudioUrl = url;
+    this.currentAudioElement = audio;
+
+    audio.onplay = () => {
+      this.isSpeakingActive = true;
+      this.callbacks.onSpeakingStart?.();
+      onStartCallback?.();
+    };
+
+    audio.onended = () => {
+      this.cleanupAudio();
+      this.isSpeakingActive = false;
+      this.callbacks.onSpeakingEnd?.();
+      onEndCallback?.();
+    };
+
+    audio.onerror = (e) => {
+      this.cleanupAudio();
+      this.isSpeakingActive = false;
+      if (!this.isExplicitlyCancelled) {
+        this.callbacks.onError?.('Audio playback failed.', false);
+        onErrorCallback?.(e);
+      }
+      this.callbacks.onSpeakingEnd?.();
+      onEndCallback?.();
+    };
+
+    try {
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          this.cleanupAudio();
+          this.isSpeakingActive = false;
+          if (!this.isExplicitlyCancelled) {
+            console.warn('Audio playback error / autoplay rejection:', err);
+            this.callbacks.onError?.('Audio playback failed or was blocked by autoplay.', false);
+            onErrorCallback?.(err);
+          }
+          this.callbacks.onSpeakingEnd?.();
+          onEndCallback?.();
+        });
+      }
+      return true;
+    } catch (err) {
+      this.cleanupAudio();
+      this.isSpeakingActive = false;
+      this.callbacks.onSpeakingEnd?.();
+      onEndCallback?.();
+      onErrorCallback?.(err);
+      return false;
+    }
   }
 
   public speak(

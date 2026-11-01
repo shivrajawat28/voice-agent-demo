@@ -157,6 +157,8 @@ export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({
         return isSpeakingDetected
           ? 'ring-4 ring-emerald-500/70 bg-emerald-500/20 text-emerald-400 scale-105 shadow-emerald-500/30'
           : 'ring-4 ring-amber-500/50 bg-amber-500/10 text-amber-400 scale-105 shadow-amber-500/20';
+      case 'finalizing':
+        return 'ring-4 ring-indigo-500/50 bg-indigo-500/10 text-indigo-400 animate-pulse';
       case 'processing':
         return 'ring-4 ring-blue-500/50 bg-blue-500/10 text-blue-400';
       case 'speaking':
@@ -173,6 +175,8 @@ export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({
     switch (state) {
       case 'listening':
         return `Listening... ${formatTimer(elapsedSeconds)}`;
+      case 'finalizing':
+        return 'Finalizing speech... / समझ रहे हैं...';
       case 'processing':
         return 'Multi-agent reasoning in progress...';
       case 'speaking':

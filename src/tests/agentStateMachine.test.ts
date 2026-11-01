@@ -157,5 +157,57 @@ describe('AgentStateMachine (Finite State Machine)', () => {
     sm.transition('TRANSCRIPTION_RECEIVED');
     expect(notifiedState).toBe('processing');
   });
+
+  // Phase 26: Finalizing State Transitions
+  it('supports the Phase 26 finalizing workflow and guards against duplicate finalization', () => {
+    // 1. Enter listening
+    sm.transition('START_LISTENING');
+    expect(sm.getState()).toBe('listening');
+
+    // 2. User clicks "Done Speaking" -> FINALIZE_START
+    expect(sm.can('FINALIZE_START')).toBe(true);
+    const finalizeStep = sm.transition('FINALIZE_START');
+    expect(finalizeStep.success).toBe(true);
+    expect(sm.getState()).toBe('finalizing');
+
+    // 3. Duplicate clicks to FINALIZE_START are rejected while finalizing
+    expect(sm.can('FINALIZE_START')).toBe(false);
+    const duplicateStep = sm.transition('FINALIZE_START');
+    expect(duplicateStep.success).toBe(false);
+    expect(sm.getState()).toBe('finalizing');
+
+    // 4. Transcription received moves to processing
+    expect(sm.can('TRANSCRIPTION_RECEIVED')).toBe(true);
+    const processStep = sm.transition('TRANSCRIPTION_RECEIVED');
+    expect(processStep.success).toBe(true);
+    expect(sm.getState()).toBe('processing');
+
+    // 5. Duplicate FINALIZE_START is also rejected while processing
+    expect(sm.can('FINALIZE_START')).toBe(false);
+    expect(sm.transition('FINALIZE_START').success).toBe(false);
+
+    // 6. Complete normal speech lifecycle
+    sm.transition('SPEAK_START');
+    expect(sm.getState()).toBe('speaking');
+    sm.transition('SPEAK_END');
+    expect(sm.getState()).toBe('idle');
+  });
+
+  it('allows safe cancel or error from finalizing state', () => {
+    // Cancel path
+    sm.transition('START_LISTENING');
+    sm.transition('FINALIZE_START');
+    expect(sm.getState()).toBe('finalizing');
+    sm.cancel();
+    expect(sm.getState()).toBe('idle');
+
+    // Error path
+    sm.transition('START_LISTENING');
+    sm.transition('FINALIZE_START');
+    expect(sm.getState()).toBe('finalizing');
+    sm.transition('FAIL', 'WebSocket dropped during finalization');
+    expect(sm.getState()).toBe('error');
+    expect(sm.getError()).toBe('WebSocket dropped during finalization');
+  });
 });
 

@@ -124,6 +124,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
   const sessionIdRef = useRef<string>(
     `sess-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
   );
+  // Phase 26 Speech Utterance and Idempotency Refs
+  const activeUtteranceIdRef = useRef<string | null>(null);
+  const isProcessingTurnRef = useRef<boolean>(false);
 
   const stateMachineRef = useRef<AgentStateMachine>(new AgentStateMachine('idle'));
   const conversationEngineRef = useRef<ConversationEngine>(new ConversationEngine());
@@ -265,8 +268,43 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         sm.transition('SPEAK_START');
       }
 
+      // Build speakable chunks: if leading sentence is very short (<= 5 words, e.g. greeting),
+      // merge with next sentence so initial playback duration (~3.5s) masks subsequent prefetch latency
+      // and eliminates the 1-2 second awkward silence.
+      interface SpeakableChunk {
+        text: string;
+        targetRevealedCount: number;
+      }
+      const chunks: SpeakableChunk[] = [];
+      let idx = 0;
+      while (idx < sentences.length) {
+        const s = sentences[idx].trim();
+        if (!s) {
+          idx++;
+          continue;
+        }
+        const words = s.split(/\s+/).filter(Boolean);
+        if (words.length <= 5 && idx + 1 < sentences.length) {
+          chunks.push({
+            text: `${s} ${sentences[idx + 1].trim()}`,
+            targetRevealedCount: idx + 2,
+          });
+          idx += 2;
+        } else {
+          chunks.push({
+            text: s,
+            targetRevealedCount: idx + 1,
+          });
+          idx += 1;
+        }
+      }
+      if (chunks.length === 0 && sentences.length > 0) {
+        chunks.push({ text: sentences.join(' '), targetRevealedCount: sentences.length });
+      }
+
       // Pre-fetch cache for next sentence audio
       let prefetchPromise: Promise<Blob | null> | null = null;
+      let nextPreloadedAudio: { audio: HTMLAudioElement; url: string } | null = null;
 
       const fetchSentenceTTS = async (textToSpeak: string): Promise<Blob | null> => {
         try {
@@ -294,65 +332,86 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         return null;
       };
 
-      for (let sIdx = 0; sIdx < sentences.length; sIdx++) {
+      for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
         if (abortSignal.aborted) break;
 
-        const currentSentence = sentences[sIdx].trim();
-        if (!currentSentence) continue;
-
-        setCurrentSpeakingSentenceIndex(sIdx);
+        const currentChunk = chunks[cIdx];
+        setCurrentSpeakingSentenceIndex(cIdx);
 
         // Case A: Live Gnani Neural TTS
         if (ttsProvider === 'gnani' && gnaniConfigured) {
           setGyaniAudioStatus('GNANI AUDIO GENERATING');
           setPlaybackState('GENERATING AUDIO');
 
-          // Get audio blob (either pre-fetched or fetch now)
+          // Get audio blob (either preloaded, pre-fetched, or fetch now)
           let audioBlob: Blob | null = null;
-          if (prefetchPromise) {
-            audioBlob = await prefetchPromise;
-            prefetchPromise = null;
-          }
-          if (!audioBlob && !abortSignal.aborted) {
-            audioBlob = await fetchSentenceTTS(currentSentence);
+          const preloadedObj = nextPreloadedAudio;
+          nextPreloadedAudio = null;
+
+          if (!preloadedObj) {
+            if (prefetchPromise) {
+              audioBlob = await prefetchPromise;
+              prefetchPromise = null;
+            }
+            if (!audioBlob && !abortSignal.aborted) {
+              audioBlob = await fetchSentenceTTS(currentChunk.text);
+            }
           }
 
           if (abortSignal.aborted) break;
 
-          if (audioBlob) {
-            // Progressive sentence disclosure: reveal this sentence as its audio starts
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sIdx + 1 }));
+          if (preloadedObj || audioBlob) {
+            // Progressive sentence disclosure: reveal this chunk as its audio starts
+            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
             setGyaniAudioStatus('GNANI AUDIO PLAYING');
             setPlaybackState('SPEAKING');
 
-            // While current sentence plays, start pre-fetching the NEXT sentence!
-            if (sIdx + 1 < sentences.length && !abortSignal.aborted) {
-              const nextSentence = sentences[sIdx + 1].trim();
-              if (nextSentence) {
-                prefetchPromise = fetchSentenceTTS(nextSentence);
-              }
+            // While current sentence plays, start pre-fetching & pre-loading the NEXT sentence!
+            if (cIdx + 1 < chunks.length && !abortSignal.aborted) {
+              const nextChunk = chunks[cIdx + 1];
+              prefetchPromise = fetchSentenceTTS(nextChunk.text).then((blob) => {
+                if (blob && !abortSignal.aborted) {
+                  try {
+                    nextPreloadedAudio = vc.createPreloadedAudio(blob);
+                  } catch {}
+                }
+                return blob;
+              });
             }
 
-            // Play audio blob and await end
+            // Play audio and await end
             await new Promise<void>((resolve) => {
-              const played = vc.playAudioBlob(
-                audioBlob!,
-                () => resolve(),
-                () => resolve(),
-                () => {
-                  setGyaniAudioStatus('GNANI AUDIO PLAYING');
-                  setPlaybackState('SPEAKING');
-                }
-              );
+              let played = false;
+              if (preloadedObj) {
+                played = vc.playPreloadedAudio(
+                  preloadedObj,
+                  () => resolve(),
+                  () => resolve(),
+                  () => {
+                    setGyaniAudioStatus('GNANI AUDIO PLAYING');
+                    setPlaybackState('SPEAKING');
+                  }
+                );
+              } else if (audioBlob) {
+                played = vc.playAudioBlob(
+                  audioBlob,
+                  () => resolve(),
+                  () => resolve(),
+                  () => {
+                    setGyaniAudioStatus('GNANI AUDIO PLAYING');
+                    setPlaybackState('SPEAKING');
+                  }
+                );
+              }
               if (!played) resolve();
             });
           } else {
             // If TTS fetch failed for this sentence, fall back to browser speech for this sentence
             if (capabilities.speechSynthesisSupported && !abortSignal.aborted) {
-              setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sIdx + 1 }));
+              setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
               setPlaybackState('SPEAKING');
               await new Promise<void>((resolve) => {
-                vc.speak(currentSentence, () => resolve());
+                vc.speak(currentChunk.text, () => resolve());
               });
             }
           }
@@ -360,9 +419,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         // Case B: Mock Test Tone
         else if (ttsProvider === 'mock') {
           setPlaybackState('SPEAKING');
-          const mockBlob = await fetchSentenceTTS(currentSentence);
+          const mockBlob = await fetchSentenceTTS(currentChunk.text);
           if (mockBlob && !abortSignal.aborted) {
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sIdx + 1 }));
+            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
             await new Promise<void>((resolve) => {
               vc.playAudioBlob(mockBlob, () => resolve());
             });
@@ -372,9 +431,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         else {
           setPlaybackState('SPEAKING');
           if (capabilities.speechSynthesisSupported && !abortSignal.aborted) {
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sIdx + 1 }));
+            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
             await new Promise<void>((resolve) => {
-              vc.speak(currentSentence, () => resolve());
+              vc.speak(currentChunk.text, () => resolve());
             });
           }
         }
@@ -386,11 +445,13 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         setPlaybackState('COMPLETED');
         setCurrentSpeakingSentenceIndex(null);
         setCurrentSpeakingMsgId(null);
+        isProcessingTurnRef.current = false;
         if (sm.getState() === 'speaking' || sm.getState() === 'processing') {
           sm.transition('SPEAK_END');
         }
       } else {
         setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sentences.length }));
+        isProcessingTurnRef.current = false;
       }
     },
     [capabilities.speechSynthesisSupported, gnaniConfigured, language, selectedVoice, ttsProvider, ttsSpeed]
@@ -519,13 +580,25 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         setPartialTranscript(null);
         if (sm.getState() === 'listening') {
           sm.cancel();
+        } else if (sm.getState() === 'finalizing' && !isProcessingTurnRef.current) {
+          sm.cancel();
         }
       },
-      onTranscriptionResult: (transcriptText: string) => {
+      onTranscriptionResult: (transcriptText: string, utteranceId?: string) => {
         setPartialTranscript(null);
+        if (utteranceId && activeUtteranceIdRef.current && utteranceId !== activeUtteranceIdRef.current) {
+          // Stale callback from an older recording session
+          return;
+        }
+        if (isProcessingTurnRef.current) {
+          return;
+        }
+        isProcessingTurnRef.current = true;
         const transition = sm.transition('TRANSCRIPTION_RECEIVED');
         if (transition.success) {
           handleProcessInput(transcriptText);
+        } else {
+          isProcessingTurnRef.current = false;
         }
       },
       onPartialTranscript: (partialText: string) => {
@@ -542,12 +615,14 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         }
       },
       onSpeakingEnd: () => {
+        isProcessingTurnRef.current = false;
         if (sm.getState() === 'speaking' || sm.getState() === 'processing') {
           sm.transition('SPEAK_END');
         }
       },
       onError: (msg: string, isPermDenied: boolean) => {
         setPartialTranscript(null);
+        isProcessingTurnRef.current = false;
         if (isPermDenied) {
           setMicPermission('denied');
         }
@@ -573,6 +648,10 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     setCurrentSpeakingMsgId(null);
     setCurrentSpeakingSentenceIndex(null);
 
+    const newUtteranceId = `utt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    activeUtteranceIdRef.current = newUtteranceId;
+    isProcessingTurnRef.current = false;
+
     const res = sm.transition('START_LISTENING');
     if (!res.success) return false;
 
@@ -583,7 +662,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         setSTTStatusMessage(
           'GNANI AI STT unavailable — API credentials required. Listening via Browser Native fallback.'
         );
-        const started = vc.startListening();
+        const started = vc.startListening(newUtteranceId);
         if (!started) sm.transition('FAIL', 'Failed to activate microphone input.');
         return true;
       }
@@ -592,13 +671,14 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
       setSTTStatusMessage('GNANI AI STT: Live streaming (Prisma v3.0, indic-auto)...');
 
       vc.startGnaniStreaming({
+        utteranceId: newUtteranceId,
         onError: (err, isAuth) => {
           if (isAuth) {
             setSTTRuntimeStatus('gnani_blocked_fallback');
             setSTTStatusMessage(
               'GNANI AI STT: Credentials rejected/missing. Switched to Browser Native.'
             );
-            vc.startListening();
+            vc.startListening(newUtteranceId);
           } else {
             setSTTRuntimeStatus('error');
             setSTTStatusMessage(`GNANI AI STT error: ${err}`);
@@ -609,7 +689,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         if (!started) {
           setSTTRuntimeStatus('gnani_blocked_fallback');
           setSTTStatusMessage('GNANI AI streaming connection failed. Using Browser Native fallback.');
-          vc.startListening();
+          vc.startListening(newUtteranceId);
         }
       });
       return true;
@@ -618,17 +698,22 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     // Route 2: Browser Native Web Speech API
     setSTTRuntimeStatus('browser_native');
     setSTTStatusMessage('Listening via Browser Native SpeechRecognition');
-    const started = vc.startListening();
+    const started = vc.startListening(newUtteranceId);
     if (!started) sm.transition('FAIL', 'Failed to activate microphone input.');
 
     return true;
   }, [gnaniConfigured, handleProcessInput, sttProvider]);
 
   const finishListening = useCallback(() => {
+    const sm = stateMachineRef.current;
+    if (sm.can('FINALIZE_START')) {
+      sm.transition('FINALIZE_START');
+    }
     voiceControllerRef.current.finishListening();
   }, []);
 
   const stopOrCancel = useCallback(() => {
+    isProcessingTurnRef.current = false;
     playbackAbortRef.current?.abort();
     voiceControllerRef.current.cancelAll();
     stateMachineRef.current.cancel();

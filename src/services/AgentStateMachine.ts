@@ -37,6 +37,12 @@ export class AgentStateMachine {
       CANCEL_OR_RESET: 'idle',
     },
     listening: {
+      FINALIZE_START: 'finalizing',
+      TRANSCRIPTION_RECEIVED: 'processing',
+      FAIL: 'error',
+      CANCEL_OR_RESET: 'idle',
+    },
+    finalizing: {
       TRANSCRIPTION_RECEIVED: 'processing',
       FAIL: 'error',
       CANCEL_OR_RESET: 'idle',

@@ -106,8 +106,9 @@ class GnaniSTTStreamHandler:
 
                 # Two-way streaming tasks
                 audio_buffer = bytearray()
-                seen_finals = set()
-                last_interim_text = ""
+                seen_finals = []
+                latest_interim_text = ""
+                last_interim_sent = ""
                 stop_event = asyncio.Event()
                 client_finished_speaking = asyncio.Event()
 
@@ -195,7 +196,7 @@ class GnaniSTTStreamHandler:
                                     "session_id": session_id,
                                 })
                             elif event_type == "transcript":
-                                nonlocal last_interim_text
+                                nonlocal latest_interim_text, last_interim_sent
                                 transcript_text = event.get("text", "").strip()
                                 detected_lang = event.get("detected_language_code") or event.get("language") or "hi-IN"
                                 is_final = bool(event.get("is_final", True))
@@ -204,12 +205,20 @@ class GnaniSTTStreamHandler:
                                 if is_final:
                                     if transcript_text in seen_finals:
                                         continue
-                                    seen_finals.add(transcript_text)
-                                    # If previous finals exist, combine them so multi-clause sentences aren't truncated
-                                    combined_finals = " ".join(sorted(seen_finals, key=lambda x: list(seen_finals).index(x)))
+                                    seen_finals.append(transcript_text)
+                                    # If previous finals exist, combine them in strict arrival order
+                                    combined_finals = " ".join(seen_finals)
+                                    authoritative_text = combined_finals if len(combined_finals) >= len(transcript_text) else transcript_text
+
+                                    # If interim was more complete than final segment (e.g. final is only the trailing word), preserve interim
+                                    if len(latest_interim_text) > len(authoritative_text) and (
+                                        authoritative_text in latest_interim_text or len(authoritative_text.split()) == 1
+                                    ):
+                                        authoritative_text = latest_interim_text
+
                                     await client_ws.send_json({
                                         "type": "final_transcript",
-                                        "text": combined_finals,
+                                        "text": authoritative_text,
                                         "segment_text": transcript_text,
                                         "is_final": True,
                                         "detected_language": detected_lang,
@@ -218,18 +227,18 @@ class GnaniSTTStreamHandler:
                                         "provider": "gnani_prisma_v3",
                                     })
                                 else:
-                                    if transcript_text == last_interim_text:
-                                        continue
-                                    last_interim_text = transcript_text
-                                    await client_ws.send_json({
-                                        "type": "transcript",
-                                        "text": transcript_text,
-                                        "is_final": False,
-                                        "detected_language": detected_lang,
-                                        "duration_ms": duration_ms,
-                                        "session_id": session_id,
-                                        "provider": "gnani_prisma_v3",
-                                    })
+                                    if transcript_text and transcript_text != last_interim_sent:
+                                        latest_interim_text = transcript_text
+                                        last_interim_sent = transcript_text
+                                        await client_ws.send_json({
+                                            "type": "transcript",
+                                            "text": transcript_text,
+                                            "is_final": False,
+                                            "detected_language": detected_lang,
+                                            "duration_ms": duration_ms,
+                                            "session_id": session_id,
+                                            "provider": "gnani_prisma_v3",
+                                        })
 
                                 if is_final and client_finished_speaking.is_set():
                                     # Low-latency 100ms grace window for immediately queued back-to-back frames
@@ -261,11 +270,29 @@ class GnaniSTTStreamHandler:
 
                 if not stop_event.is_set():
                     # If client pump finished normally (user stopped speaking),
-                    # allow event_task up to 5 seconds to receive the final transcript from Gnani!
+                    # allow event_task up to 2.5 seconds to receive the final transcript from Gnani!
                     try:
-                        await asyncio.wait_for(event_task, timeout=5.0)
+                        await asyncio.wait_for(event_task, timeout=2.5)
                     except asyncio.TimeoutError:
                         logger.info("STT session reached post-speech timeout waiting for final transcript.")
+
+                # Fallback: if user finished speaking and no final event was emitted, but an interim transcript was captured,
+                # emit the interim text as final transcript to guarantee user input is not lost
+                if client_finished_speaking.is_set() and not seen_finals and latest_interim_text:
+                    logger.info("Emitting latest interim text as final transcript fallback.")
+                    try:
+                        await client_ws.send_json({
+                            "type": "final_transcript",
+                            "text": latest_interim_text,
+                            "segment_text": latest_interim_text,
+                            "is_final": True,
+                            "detected_language": "hi-IN",
+                            "duration_ms": 0.0,
+                            "session_id": session_id,
+                            "provider": "gnani_prisma_v3",
+                        })
+                    except Exception:
+                        pass
 
                 stop_event.set()
                 if not event_task.done():

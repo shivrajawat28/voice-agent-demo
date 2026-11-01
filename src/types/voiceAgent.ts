@@ -3,10 +3,11 @@
  * Phase 6: Voice Reliability, Mock Fix, Gnani Verification & Real Speech Validation
  */
 
-export type AgentState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+export type AgentState = 'idle' | 'listening' | 'finalizing' | 'processing' | 'speaking' | 'error';
 
 export type StateEvent =
   | 'START_LISTENING'
+  | 'FINALIZE_START'
   | 'TRANSCRIPTION_RECEIVED'
   | 'TEXT_SUBMITTED'
   | 'SPEAK_START'
