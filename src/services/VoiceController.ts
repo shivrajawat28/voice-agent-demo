@@ -53,6 +53,9 @@ export class VoiceController {
   // Real-time Gnani STT streaming fields
   private gnaniWebSocket: WebSocket | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private muteGainNode: GainNode | null = null;
+  private preConnectionAudioQueue: ArrayBuffer[] = [];
   private isGnaniStreaming: boolean = false;
 
   // Phase 26 Speech Session & Utterance Tracking
@@ -528,9 +531,10 @@ export class VoiceController {
     onError?: (error: string, isAuthError: boolean) => void;
     onConnected?: () => void;
   } = {}): Promise<boolean> {
-    if (this.isListeningActive) {
-      console.warn('VoiceController: Already listening or streaming.');
-      return false;
+    if (this.isListeningActive || this.isGnaniStreaming) {
+      console.info('VoiceController: Resetting active listening session before starting new one.');
+      this.cleanupGnaniStreaming();
+      this.stopListening();
     }
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -544,6 +548,7 @@ export class VoiceController {
     this.hasDispatchedFinal = false;
     this.provisionalTranscript = '';
     this.authoritativeTranscript = '';
+    this.preConnectionAudioQueue = [];
     const activeUtterance = options.utteranceId || `utt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     this.currentUtteranceId = activeUtterance;
     if (this.finalizeTimer) {
@@ -573,6 +578,15 @@ export class VoiceController {
       let pcmSampleBuffer: number[] = [];
 
       ws.onopen = () => {
+        if (this.preConnectionAudioQueue.length > 0) {
+          console.info(
+            `[VoiceController:${activeUtterance}] STT WebSocket connected. Flushing ${this.preConnectionAudioQueue.length} pre-buffered frames.`
+          );
+          while (this.preConnectionAudioQueue.length > 0) {
+            const queued = this.preConnectionAudioQueue.shift()!;
+            ws.send(queued);
+          }
+        }
         options.onConnected?.();
       };
 
@@ -600,6 +614,8 @@ export class VoiceController {
             this.provisionalTranscript = finalText;
             if (this.isFinalizingSession) {
               this.dispatchFinalTranscript(finalText, activeUtterance);
+              this.cleanupGnaniStreaming();
+              this.callbacks.onListeningEnd?.();
             } else {
               this.callbacks.onPartialTranscript?.(finalText);
             }
@@ -650,6 +666,7 @@ export class VoiceController {
       }
 
       const sourceNode = audioCtx.createMediaStreamSource(stream);
+      this.sourceNode = sourceNode;
 
       // Attach visualizer analyser if supported
       if (audioCtx.createAnalyser) {
@@ -684,7 +701,7 @@ export class VoiceController {
         this.scriptProcessor = processor;
 
         processor.onaudioprocess = (e) => {
-          if (!this.isGnaniStreaming || ws.readyState !== WebSocket.OPEN) return;
+          if (!this.isGnaniStreaming) return;
 
           const inputChannelData = e.inputBuffer.getChannelData(0);
           const resampled = VoiceController.resampleAudio(
@@ -701,12 +718,24 @@ export class VoiceController {
             const frameSamples = new Float32Array(pcmSampleBuffer.slice(0, 512));
             pcmSampleBuffer = pcmSampleBuffer.slice(512);
             const pcmBuffer = VoiceController.floatTo16BitPCM(frameSamples);
-            ws.send(pcmBuffer);
+
+            if (this.gnaniWebSocket && this.gnaniWebSocket.readyState === WebSocket.OPEN) {
+              while (this.preConnectionAudioQueue.length > 0) {
+                const queued = this.preConnectionAudioQueue.shift()!;
+                this.gnaniWebSocket.send(queued);
+              }
+              this.gnaniWebSocket.send(pcmBuffer);
+            } else if (this.gnaniWebSocket && this.gnaniWebSocket.readyState === WebSocket.CONNECTING) {
+              if (this.preConnectionAudioQueue.length < 150) {
+                this.preConnectionAudioQueue.push(pcmBuffer);
+              }
+            }
           }
         };
 
         // Route through a muted gain node to prevent speaker feedback while keeping processor alive
         const muteGain = audioCtx.createGain ? audioCtx.createGain() : null;
+        this.muteGainNode = muteGain;
         if (muteGain) {
           muteGain.gain.value = 0;
           sourceNode.connect(processor);
@@ -724,7 +753,7 @@ export class VoiceController {
       this.cleanupGnaniStreaming();
       let errorMsg = 'Failed to access microphone or connect to Gnani STT.';
       if (err?.name === 'NotAllowedError') {
-        errorMsg = 'Microphone permission was denied. Please allow microphone access.';
+        errorMsg = 'Microphone permission was denied. Please allow microphone access in site settings.';
       } else if (err?.name === 'NotFoundError') {
         errorMsg = 'No microphone device was found on this system.';
       } else if (err?.name === 'NotReadableError') {
@@ -791,7 +820,7 @@ export class VoiceController {
     this.cleanupGnaniStreaming();
   }
 
-  private cleanupGnaniStreaming(): void {
+  public cleanupGnaniStreaming(): void {
     this.isGnaniStreaming = false;
     this.isListeningActive = false;
     this.stopAudioAnalyser();
@@ -801,6 +830,20 @@ export class VoiceController {
         this.scriptProcessor.disconnect();
       } catch {}
       this.scriptProcessor = null;
+    }
+
+    if (this.muteGainNode) {
+      try {
+        this.muteGainNode.disconnect();
+      } catch {}
+      this.muteGainNode = null;
+    }
+
+    if (this.sourceNode) {
+      try {
+        this.sourceNode.disconnect();
+      } catch {}
+      this.sourceNode = null;
     }
 
     if (this.audioContext) {
@@ -823,6 +866,8 @@ export class VoiceController {
       } catch {}
       this.gnaniWebSocket = null;
     }
+
+    this.preConnectionAudioQueue = [];
   }
 
   /**

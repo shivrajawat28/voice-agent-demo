@@ -575,6 +575,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     vc.setCallbacks({
       onListeningStart: () => {
         setPartialTranscript(null);
+        setMicPermission('granted');
       },
       onListeningEnd: () => {
         setPartialTranscript(null);
@@ -687,9 +688,11 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         },
       }).then((started) => {
         if (!started) {
-          setSTTRuntimeStatus('gnani_blocked_fallback');
-          setSTTStatusMessage('GNANI AI streaming connection failed. Using Browser Native fallback.');
-          vc.startListening(newUtteranceId);
+          if (sm.getState() !== 'error') {
+            setSTTRuntimeStatus('gnani_blocked_fallback');
+            setSTTStatusMessage('GNANI AI streaming connection failed. Using Browser Native fallback.');
+            vc.startListening(newUtteranceId);
+          }
         }
       });
       return true;

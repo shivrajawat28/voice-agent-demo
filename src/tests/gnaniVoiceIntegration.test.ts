@@ -206,5 +206,118 @@ describe('VoiceController Gnani Speech & Audio Processing', () => {
       expect(finalCalls.length).toBeGreaterThan(0);
       expect(finalCalls[finalCalls.length - 1][0]).toBe('मेरे खेत की स्थिति क्या है');
     });
+
+    it('buffers audio frames while WebSocket is CONNECTING and flushes them on ws.onopen', async () => {
+      const vc = new VoiceController();
+      let capturedOnOpen: (() => void) | null = null;
+
+      const delayedWs: any = {
+        readyState: 0, // CONNECTING
+        send: vi.fn(),
+        close: vi.fn(),
+        set onopen(fn: any) {
+          capturedOnOpen = fn;
+        },
+        get onopen() {
+          return capturedOnOpen;
+        },
+        onmessage: null,
+        onerror: null,
+        onclose: null,
+      };
+
+      (globalThis as any).WebSocket = vi.fn().mockImplementation(() => delayedWs) as any;
+      ((globalThis as any).WebSocket as any).OPEN = 1;
+      ((globalThis as any).WebSocket as any).CONNECTING = 0;
+
+      let capturedProcessCallback: any = null;
+      const mockScriptProcessor = {
+        set onaudioprocess(fn: any) {
+          capturedProcessCallback = fn;
+        },
+        get onaudioprocess() {
+          return capturedProcessCallback;
+        },
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      };
+      const mockSourceNode = { connect: vi.fn(), disconnect: vi.fn() };
+      const mockMuteGain = { connect: vi.fn(), disconnect: vi.fn(), gain: { value: 1 } };
+      const mockAudioCtx = {
+        sampleRate: 16000,
+        createMediaStreamSource: vi.fn().mockReturnValue(mockSourceNode),
+        createScriptProcessor: vi.fn().mockReturnValue(mockScriptProcessor),
+        createGain: vi.fn().mockReturnValue(mockMuteGain),
+        destination: {},
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      (window as any).AudioContext = vi.fn().mockImplementation(() => mockAudioCtx);
+
+      await vc.startGnaniStreaming({ wsUrl: 'ws://127.0.0.1:8000/api/ws/stt' });
+
+      // Simulate audio processing while still CONNECTING
+      expect(capturedProcessCallback).not.toBeNull();
+      const mockAudioEvent = {
+        inputBuffer: {
+          getChannelData: vi.fn().mockReturnValue(new Float32Array(512)), // exactly 512 samples
+        },
+      };
+
+      capturedProcessCallback(mockAudioEvent);
+      // Because ws.readyState is 0 (CONNECTING), delayedWs.send should NOT have been called yet
+      expect(delayedWs.send).not.toHaveBeenCalled();
+
+      // Now trigger onopen
+      delayedWs.readyState = 1; // OPEN
+      expect(capturedOnOpen).not.toBeNull();
+      capturedOnOpen!();
+
+      // Queued audio frame should have been flushed immediately
+      expect(delayedWs.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('cleans up persistent nodes and resets state cleanly on cleanupGnaniStreaming', async () => {
+      const vc = new VoiceController();
+      const mockSourceNode = { connect: vi.fn(), disconnect: vi.fn() };
+      const mockMuteGain = { connect: vi.fn(), disconnect: vi.fn(), gain: { value: 1 } };
+      const mockScriptProcessor = { onaudioprocess: null, connect: vi.fn(), disconnect: vi.fn() };
+      const mockAudioCtx = {
+        sampleRate: 16000,
+        createMediaStreamSource: vi.fn().mockReturnValue(mockSourceNode),
+        createScriptProcessor: vi.fn().mockReturnValue(mockScriptProcessor),
+        createGain: vi.fn().mockReturnValue(mockMuteGain),
+        destination: {},
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      (window as any).AudioContext = vi.fn().mockImplementation(() => mockAudioCtx);
+
+      await vc.startGnaniStreaming({ wsUrl: 'ws://127.0.0.1:8000/api/ws/stt' });
+
+      // Invoke cleanup
+      vc.cleanupGnaniStreaming();
+
+      // Nodes must be disconnected
+      expect(mockSourceNode.disconnect).toHaveBeenCalled();
+      expect(mockMuteGain.disconnect).toHaveBeenCalled();
+      expect(mockScriptProcessor.disconnect).toHaveBeenCalled();
+      expect(mockAudioCtx.close).toHaveBeenCalled();
+    });
+
+    it('correctly reports NotAllowedError as mic permission error and not auth error', async () => {
+      const onError = vi.fn();
+      const vc = new VoiceController();
+
+      // Force getUserMedia to throw NotAllowedError
+      const permError = new Error('Permission denied');
+      permError.name = 'NotAllowedError';
+      navigator.mediaDevices.getUserMedia = vi.fn().mockRejectedValue(permError);
+
+      const started = await vc.startGnaniStreaming({ onError });
+      expect(started).toBe(false);
+      expect(onError).toHaveBeenCalledWith(
+        'Microphone permission was denied. Please allow microphone access in site settings.',
+        false // Must NOT be auth error!
+      );
+    });
   });
 });

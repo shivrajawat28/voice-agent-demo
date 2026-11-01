@@ -483,3 +483,70 @@ def test_gnani_stt_interim_fallback_on_clean_stop():
     assert final_events[0]["text"] == "क्या मेरी गेहूं की फसल को पानी चाहिए?"
     assert final_events[0]["is_final"] is True
 
+
+def test_gnani_stt_handles_asgi_websocket_disconnect_cleanly():
+    """
+    Phase 28 Bug Verification:
+    When Starlette sends {"type": "websocket.disconnect"} upon client disconnection,
+    the handler must detect it and terminate cleanly without calling receive() again.
+    """
+    class DisconnectingClientWS:
+        def __init__(self):
+            self.accepted = False
+            self.closed = False
+            self.calls = 0
+            self.received_events = []
+
+        async def accept(self):
+            self.accepted = True
+
+        async def receive(self):
+            self.calls += 1
+            if self.calls == 1:
+                return {"type": "websocket.receive", "bytes": b"\x00\x00" * 512}
+            elif self.calls == 2:
+                # Deliver Starlette ASGI disconnect frame
+                return {"type": "websocket.disconnect", "code": 1000}
+            else:
+                raise RuntimeError('Cannot call "receive" once a disconnect message has been received.')
+
+        async def send_json(self, data):
+            self.received_events.append(data)
+
+        async def close(self, code=1000, reason=""):
+            self.closed = True
+
+    class DummyGnaniWS:
+        def __init__(self):
+            self.sent_frames = []
+            self.closed = False
+
+        async def send(self, data):
+            self.sent_frames.append(data)
+
+        async def __aiter__(self):
+            yield json.dumps({"type": "connected"})
+            while not self.closed:
+                await asyncio.sleep(0.05)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.closed = True
+
+    dummy_gnani = DummyGnaniWS()
+    handler = GnaniSTTStreamHandler(
+        api_key="valid-mock-key-12345",
+        ws_connect_override=lambda *a, **k: dummy_gnani,
+    )
+    client_ws = DisconnectingClientWS()
+
+    async def _test():
+        # Must terminate gracefully without raising RuntimeError
+        await handler.handle_client_websocket(client_ws)
+
+    asyncio.run(_test())
+    assert client_ws.calls == 2
+
+

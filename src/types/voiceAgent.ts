@@ -155,6 +155,7 @@ export interface VoiceCapabilities {
 }
 
 export type MicPermissionState = 'prompt' | 'granted' | 'denied' | 'unsupported';
+export type MicrophoneState = 'inactive' | 'requesting' | 'recording' | 'processing' | 'error' | 'denied';
 
 export interface BackendConfig {
   tts_provider: TTSProviderType;

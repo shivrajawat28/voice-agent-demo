@@ -141,6 +141,36 @@ class TelemetryService:
                     "Elevated electrical conductivity (2.4 dS/m) suggests localized salt accumulation.",
                 ],
             },
+            "DEMO-ZONE-004": {
+                "farm_id": self._farm_id,
+                "farm_name": self._farm_name,
+                "farmer_name": self._farmer_name,
+                "zone_id": "DEMO-ZONE-004",
+                "zone_name": "West Mustard & Gram Field (Zone 4)",
+                "crop": "mustard",
+                "variety": "Pusa Mustard-30 / JG-14",
+                "growth_stage": "Pod Formation & Seed Filling",
+                "soil_type": "Alluvial Sandy Loam",
+                "device_id": "DEMO-DEVICE-004",
+                "device_status": "online",
+                "battery_level_pct": 88.0,
+                "water_tank_level_pct": 65.0,
+                "last_seen_iso": now.isoformat(),
+                # Agronomic readings
+                "soil_moisture_pct": 38.5,  # Moderate / Adequate for mustard pod filling (35-45%)
+                "nitrogen_mg_kg": 45.0,      # Adequate
+                "phosphorus_mg_kg": 24.0,    # Good
+                "potassium_mg_kg": 195.0,    # Optimal / High
+                "soil_temperature_c": 22.8,  # Cool winter root zone
+                "ph": 7.1,                   # Neutral, optimal
+                "electrical_conductivity_ds_m": 1.1, # Normal salinity (<2.0 dS/m)
+                "data_source": "simulated",
+                "is_simulated": True,
+                "actuation_permitted": False,
+                "reading_timestamp_iso": now.isoformat(),
+                "missing_fields": [],
+                "warnings": [],
+            },
         }
 
         # Simulated Alerts
@@ -203,6 +233,7 @@ class TelemetryService:
             "DEMO-ZONE-001": {"24h": [], "7d": []},
             "DEMO-ZONE-002": {"24h": [], "7d": []},
             "DEMO-ZONE-003": {"24h": [], "7d": []},
+            "DEMO-ZONE-004": {"24h": [], "7d": []},
         }
 
         # 7-day daily samples (Day -6 to Day 0)
@@ -212,6 +243,8 @@ class TelemetryService:
         z2_7d_moisture = [38.2, 36.5, 34.8, 33.1, 31.4, 29.8, 28.5]
         # Zone 3 (high/saturated)
         z3_7d_moisture = [61.0, 62.5, 63.8, 65.2, 64.0, 65.1, 64.5]
+        # Zone 4 (steady/adequate)
+        z4_7d_moisture = [40.1, 39.8, 39.2, 38.9, 38.5, 38.7, 38.5]
 
         for i in range(7):
             t = ref_time - timedelta(days=(6 - i))
@@ -233,6 +266,12 @@ class TelemetryService:
                 "nitrogen_mg_kg": None,
                 "soil_temperature_c": 24.5 + (i * 0.1),
             })
+            history["DEMO-ZONE-004"]["7d"].append({
+                "timestamp_iso": t.isoformat(),
+                "soil_moisture_pct": z4_7d_moisture[i],
+                "nitrogen_mg_kg": 46.0 - (i * 0.15),
+                "soil_temperature_c": 22.0 + (i * 0.1),
+            })
 
         # 24-hour hourly samples
         for h in range(24):
@@ -253,6 +292,11 @@ class TelemetryService:
                 "timestamp_iso": t.isoformat(),
                 "soil_moisture_pct": round(64.5 + (0.3 * hour_mod), 1),
                 "soil_temperature_c": round(25.1 + (1.2 * hour_mod), 1),
+            })
+            history["DEMO-ZONE-004"]["24h"].append({
+                "timestamp_iso": t.isoformat(),
+                "soil_moisture_pct": round(38.5 + (0.3 * hour_mod), 1),
+                "soil_temperature_c": round(22.8 + (1.4 * hour_mod), 1),
             })
 
         return history
@@ -509,6 +553,15 @@ class TelemetryService:
                 "temp": "18–26°C",
                 "ph": "6.0–7.0",
                 "ec": "<1.8 dS/m",
+            },
+            "mustard": {
+                "n": "40–70 mg/kg (Pod Formation)",
+                "p": "20–35 mg/kg",
+                "k": ">160 mg/kg",
+                "moisture": "35–45%",
+                "temp": "15–25°C",
+                "ph": "6.5–7.5 (Neutral)",
+                "ec": "<1.5 dS/m",
             },
         }.get(crop, {
             "n": "50–80 mg/kg",

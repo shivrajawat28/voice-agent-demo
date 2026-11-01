@@ -34,20 +34,24 @@ def test_three_distinct_zones_have_unique_readings():
     assert "DEMO-ZONE-001" in zones
     assert "DEMO-ZONE-002" in zones
     assert "DEMO-ZONE-003" in zones
+    assert "DEMO-ZONE-004" in zones
 
     z1 = zones["DEMO-ZONE-001"]
     z2 = zones["DEMO-ZONE-002"]
     z3 = zones["DEMO-ZONE-003"]
+    z4 = zones["DEMO-ZONE-004"]
 
     # Verify completely different moisture values
     assert z1["soil_moisture_pct"] == 48.2
     assert z2["soil_moisture_pct"] == 28.5
     assert z3["soil_moisture_pct"] == 64.5
+    assert z4["soil_moisture_pct"] == 38.5
 
     # Verify distinct crops
     assert z1["crop"] == "wheat"
     assert z2["crop"] == "cotton"
     assert z3["crop"] == "tomato"
+    assert z4["crop"] == "mustard"
 
     # Verify different NPK values
     assert z1["nitrogen_mg_kg"] == 38.0
@@ -193,14 +197,14 @@ def test_farm_telemetry_rest_endpoints():
     assert res.status_code == 200
     ov = res.json()
     assert ov["farm_id"] == "DEMO-FARM-001"
-    assert len(ov["zones"]) == 3
+    assert len(ov["zones"]) == 4
     assert ov["is_simulated"] is True
 
     # 2. Zones list
     res_z = client.get("/api/farm/zones")
     assert res_z.status_code == 200
     zd = res_z.json()
-    assert zd["active_zone_id"] in ["DEMO-ZONE-001", "DEMO-ZONE-002", "DEMO-ZONE-003"]
+    assert zd["active_zone_id"] in ["DEMO-ZONE-001", "DEMO-ZONE-002", "DEMO-ZONE-003", "DEMO-ZONE-004"]
 
     # 3. Latest telemetry
     res_lat = client.get("/api/farm/telemetry/latest?zone_id=DEMO-ZONE-002")

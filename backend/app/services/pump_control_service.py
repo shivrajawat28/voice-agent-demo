@@ -17,6 +17,7 @@ class PumpControlService:
             "DEMO-ZONE-001": False,
             "DEMO-ZONE-002": False,
             "DEMO-ZONE-003": False,
+            "DEMO-ZONE-004": False,
         }
         # In-memory store of actions awaiting approval or resolved
         self._actions: Dict[str, PumpActionPayload] = {}

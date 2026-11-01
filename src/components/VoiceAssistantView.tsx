@@ -14,6 +14,7 @@ import {
   Layers,
   Search,
   Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { TranscriptView } from './TranscriptView';
 import { UseVoiceAgentReturn } from '../hooks/useVoiceAgent';
@@ -95,6 +96,8 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
   const {
     state: agentState,
     transcript,
+    lastError,
+    micPermission,
     activeZoneId,
     setActiveZoneId,
     language,
@@ -167,7 +170,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
       id: `q-${Date.now()}`,
       ticketId,
       farmerName: 'Prince (Farm Lead)',
-      crop: activeZoneId === 'DEMO-ZONE-002' ? 'Cotton' : activeZoneId === 'DEMO-ZONE-003' ? 'Tomato' : 'Wheat',
+      crop: activeZoneId === 'DEMO-ZONE-002' ? 'Cotton' : activeZoneId === 'DEMO-ZONE-003' ? 'Tomato' : activeZoneId === 'DEMO-ZONE-004' ? 'Mustard' : 'Wheat',
       question: q,
       answer: 'सवाल दर्ज कर लिया गया है। AI कृषि मित्र इसका विश्लेषण कर रहा है...',
       priority: regPriority,
@@ -235,13 +238,16 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
               className="bg-transparent text-xs text-slate-200 font-medium focus:outline-none cursor-pointer"
             >
               <option value="DEMO-ZONE-001" className="bg-slate-900 text-white">
-                गेहूं (Wheat) • Zone 1
+                गेहूं (Wheat) • Zone 1 (North)
               </option>
               <option value="DEMO-ZONE-002" className="bg-slate-900 text-white">
-                कपास (Cotton) • Zone 2
+                कपास (Cotton) • Zone 2 (South)
               </option>
               <option value="DEMO-ZONE-003" className="bg-slate-900 text-white">
-                टमाटर (Tomato) • Zone 3
+                टमाटर (Tomato) • Zone 3 (East)
+              </option>
+              <option value="DEMO-ZONE-004" className="bg-slate-900 text-white">
+                सरसों / चना (Mustard/Gram) • Zone 4 (West)
               </option>
             </select>
           </div>
@@ -510,6 +516,30 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Microphone Permission Blocked Notice */}
+          {micPermission === 'denied' && (
+            <div className="matte-card rounded-xl p-3.5 border border-red-500/40 bg-red-950/30 flex items-start gap-3 animate-fadeIn">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-red-200">
+                <p className="font-semibold text-red-300">माइक्रोफ़ोन अनुमति अवरुद्ध (Microphone Access Blocked)</p>
+                <p className="text-red-300/80 mt-1 leading-relaxed">
+                  ब्राउज़र ने माइक्रोफ़ोन की अनुमति ब्लॉक कर दी है। कृपया अपने ब्राउज़र के एड्रेस बार (URL bar) में लॉक 🔒 / साइट सेटिंग्स आइकन पर क्लिक करके 'Microphone' को 'Allow' (अनुमति दें) करें, फिर पेज को रीफ़्रेश करें।
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* General Audio / Voice Error Alert */}
+          {lastError && micPermission !== 'denied' && (
+            <div className="matte-card rounded-xl p-3 border border-amber-500/40 bg-amber-950/20 flex items-start gap-2.5 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-200 flex-1">
+                <span className="font-semibold text-amber-300">ऑडियो सूचना: </span>
+                <span>{lastError}</span>
               </div>
             </div>
           )}

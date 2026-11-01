@@ -159,9 +159,11 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
             clean = clean.replace("DEMO-ZONE-001", "ज़ोन 1")
             clean = clean.replace("DEMO-ZONE-002", "ज़ोन 2")
             clean = clean.replace("DEMO-ZONE-003", "ज़ोन 3")
+            clean = clean.replace("DEMO-ZONE-004", "ज़ोन 4")
             clean = clean.replace("DEMO-DEVICE-001", "डिवाइस 1")
             clean = clean.replace("DEMO-DEVICE-002", "डिवाइस 2")
             clean = clean.replace("DEMO-DEVICE-003", "डिवाइस 3")
+            clean = clean.replace("DEMO-DEVICE-004", "डिवाइस 4")
 
             if spell_numbers:
                 clean = re.sub(r"(\d+(?:\.\d+)?)\s*प्रतिशत", lambda m: f"{number_to_hindi_words(m.group(1))} प्रतिशत", clean)
@@ -178,9 +180,11 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
             clean = clean.replace("DEMO-ZONE-001", "Zone 1")
             clean = clean.replace("DEMO-ZONE-002", "Zone 2")
             clean = clean.replace("DEMO-ZONE-003", "Zone 3")
+            clean = clean.replace("DEMO-ZONE-004", "Zone 4")
             clean = clean.replace("DEMO-DEVICE-001", "Device 1")
             clean = clean.replace("DEMO-DEVICE-002", "Device 2")
             clean = clean.replace("DEMO-DEVICE-003", "Device 3")
+            clean = clean.replace("DEMO-DEVICE-004", "Device 4")
 
         # Condense multiple whitespaces/newlines
         clean = re.sub(r"\s+", " ", clean).strip()
@@ -253,7 +257,7 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
         if client is None:
             if self._persistent_client is None or self._persistent_client.is_closed:
                 self._persistent_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(self.timeout_seconds, connect=5.0),
+                    timeout=httpx.Timeout(self.timeout_seconds, connect=15.0),
                     limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=60.0),
                 )
             client = self._persistent_client

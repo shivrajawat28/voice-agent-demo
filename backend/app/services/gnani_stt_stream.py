@@ -12,6 +12,7 @@ import logging
 import uuid
 from typing import Optional, Dict, Any, Callable
 from fastapi import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 import websockets
 from app import config
 
@@ -104,22 +105,36 @@ class GnaniSTTStreamHandler:
                     "language": self.language_code,
                 })
 
-                # Two-way streaming tasks
+                # Two-way streaming state & coordination
                 audio_buffer = bytearray()
                 seen_finals = []
                 latest_interim_text = ""
                 last_interim_sent = ""
                 stop_event = asyncio.Event()
                 client_finished_speaking = asyncio.Event()
+                frames_sent = 0
+                bytes_received = 0
 
                 async def pump_client_to_gnani():
-                    nonlocal audio_buffer
-                    frames_sent = 0
+                    nonlocal audio_buffer, frames_sent, bytes_received
                     try:
                         while not stop_event.is_set():
-                            message = await client_ws.receive()
+                            try:
+                                message = await client_ws.receive()
+                            except (WebSocketDisconnect, RuntimeError):
+                                logger.info(f"[{session_id}] Client WebSocket disconnected while reading audio.")
+                                stop_event.set()
+                                break
+
+                            msg_type = message.get("type", "")
+                            if msg_type == "websocket.disconnect":
+                                logger.info(f"[{session_id}] Client disconnected cleanly (code: {message.get('code', 1000)}).")
+                                stop_event.set()
+                                break
+
                             if "bytes" in message and message["bytes"]:
                                 chunk = message["bytes"]
+                                bytes_received += len(chunk)
                                 audio_buffer.extend(chunk)
 
                                 # Forward in 512-sample (1024-byte) frames
@@ -134,7 +149,9 @@ class GnaniSTTStreamHandler:
                                     data = json.loads(message["text"])
                                     action = data.get("action")
                                     if action == "stop":
-                                        logger.info(f"Client finished speaking after {frames_sent} frames. Flushing VAD silence.")
+                                        logger.info(
+                                            f"[{session_id}] Client finished speaking: {frames_sent} frames sent ({bytes_received} bytes). Flushing VAD silence."
+                                        )
                                         # Flush any remaining audio frame
                                         while len(audio_buffer) >= 1024:
                                             frame = bytes(audio_buffer[:1024])
@@ -145,17 +162,18 @@ class GnaniSTTStreamHandler:
                                             await gnani_ws.send(bytes(audio_buffer) + pad)
                                             audio_buffer.clear()
 
-                                        # Send 8 frames (~256ms) of silence to trigger Gnani server VAD without artificial latency
+                                        # Send 16 frames (~512ms) of silence to trigger Gnani server VAD reliably
                                         silence_frame = b"\x00" * 1024
-                                        for _ in range(8):
+                                        for _ in range(16):
                                             if stop_event.is_set():
                                                 break
                                             await gnani_ws.send(silence_frame)
 
                                         client_finished_speaking.set()
-                                        break
+                                        # Keep waiting for events or explicit client cancel/disconnect
+                                        continue
                                     elif action == "cancel":
-                                        logger.info("Client explicitly cancelled STT recording.")
+                                        logger.info(f"[{session_id}] Client explicitly cancelled STT recording.")
                                         stop_event.set()
                                         break
                                 except json.JSONDecodeError:
@@ -165,10 +183,11 @@ class GnaniSTTStreamHandler:
                     except asyncio.CancelledError:
                         pass
                     except Exception as exc:
-                        logger.warning(f"Client audio pump terminated: {config.redact_sensitive(str(exc))}")
+                        logger.warning(f"[{session_id}] Client audio pump terminated: {config.redact_sensitive(str(exc))}")
                         stop_event.set()
 
                 async def pump_gnani_to_client():
+                    nonlocal latest_interim_text, last_interim_sent
                     try:
                         async for raw_msg in gnani_ws:
                             if stop_event.is_set():
@@ -185,6 +204,7 @@ class GnaniSTTStreamHandler:
                             event_type = event.get("type", "")
 
                             if event_type == "connected":
+                                logger.info(f"[{session_id}] Upstream GNANI Prisma ready.")
                                 await client_ws.send_json({
                                     "type": "gnani_ready",
                                     "session_id": session_id,
@@ -196,7 +216,6 @@ class GnaniSTTStreamHandler:
                                     "session_id": session_id,
                                 })
                             elif event_type == "transcript":
-                                nonlocal latest_interim_text, last_interim_sent
                                 transcript_text = event.get("text", "").strip()
                                 detected_lang = event.get("detected_language_code") or event.get("language") or "hi-IN"
                                 is_final = bool(event.get("is_final", True))
@@ -206,7 +225,6 @@ class GnaniSTTStreamHandler:
                                     if transcript_text in seen_finals:
                                         continue
                                     seen_finals.append(transcript_text)
-                                    # If previous finals exist, combine them in strict arrival order
                                     combined_finals = " ".join(seen_finals)
                                     authoritative_text = combined_finals if len(combined_finals) >= len(transcript_text) else transcript_text
 
@@ -216,6 +234,7 @@ class GnaniSTTStreamHandler:
                                     ):
                                         authoritative_text = latest_interim_text
 
+                                    logger.info(f"[{session_id}] Emitting final transcript ({len(authoritative_text)} chars).")
                                     await client_ws.send_json({
                                         "type": "final_transcript",
                                         "text": authoritative_text,
@@ -241,7 +260,6 @@ class GnaniSTTStreamHandler:
                                         })
 
                                 if is_final and client_finished_speaking.is_set():
-                                    # Low-latency 100ms grace window for immediately queued back-to-back frames
                                     await asyncio.sleep(0.10)
                                     stop_event.set()
                                     break
@@ -249,6 +267,7 @@ class GnaniSTTStreamHandler:
                                 err_code = event.get("code", 500)
                                 err_msg = event.get("message", "Upstream transcription error")
                                 sanitized = config.redact_sensitive(str(err_msg))
+                                logger.error(f"[{session_id}] Upstream GNANI STT error ({err_code}): {sanitized}")
                                 await client_ws.send_json({
                                     "type": "error",
                                     "code": err_code,
@@ -256,30 +275,51 @@ class GnaniSTTStreamHandler:
                                     "fallback_available": True,
                                     "session_id": session_id,
                                 })
+                    except websockets.exceptions.ConnectionClosed as cc:
+                        logger.info(f"[{session_id}] Upstream GNANI WebSocket closed ({cc.code}): {cc.reason}")
                     except asyncio.CancelledError:
                         pass
                     except Exception as exc:
                         sanitized = config.redact_sensitive(str(exc))
-                        logger.warning(f"Gnani event pump error: {sanitized}")
+                        logger.warning(f"[{session_id}] Gnani event pump error: {sanitized}")
+                    finally:
+                        if not stop_event.is_set() and not client_finished_speaking.is_set():
+                            try:
+                                await client_ws.send_json({
+                                    "type": "error",
+                                    "code": 503,
+                                    "message": "GNANI STT connection dropped unexpectedly.",
+                                    "fallback_available": True,
+                                    "session_id": session_id,
+                                })
+                            except Exception:
+                                pass
+                        stop_event.set()
 
                 pump_task = asyncio.create_task(pump_client_to_gnani())
                 event_task = asyncio.create_task(pump_gnani_to_client())
 
-                # Wait for either client pump to finish or error/stop
-                await pump_task
+                # Wait for whichever finishes first (client stops/disconnects, or upstream GNANI disconnects)
+                done, pending = await asyncio.wait(
+                    [pump_task, event_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-                if not stop_event.is_set():
-                    # If client pump finished normally (user stopped speaking),
-                    # allow event_task up to 2.5 seconds to receive the final transcript from Gnani!
-                    try:
-                        await asyncio.wait_for(event_task, timeout=2.5)
-                    except asyncio.TimeoutError:
-                        logger.info("STT session reached post-speech timeout waiting for final transcript.")
+                if client_finished_speaking.is_set() and not stop_event.is_set():
+                    # If client pump finished normally (user clicked Done Speaking),
+                    # allow event_task up to 5.0 seconds to receive the final transcript from Gnani!
+                    if not event_task.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(event_task), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            logger.info(f"[{session_id}] STT session reached post-speech timeout waiting for final transcript.")
+                        except Exception:
+                            pass
 
                 # Fallback: if user finished speaking and no final event was emitted, but an interim transcript was captured,
                 # emit the interim text as final transcript to guarantee user input is not lost
                 if client_finished_speaking.is_set() and not seen_finals and latest_interim_text:
-                    logger.info("Emitting latest interim text as final transcript fallback.")
+                    logger.info(f"[{session_id}] Emitting latest interim text as final transcript fallback.")
                     try:
                         await client_ws.send_json({
                             "type": "final_transcript",
@@ -295,12 +335,13 @@ class GnaniSTTStreamHandler:
                         pass
 
                 stop_event.set()
-                if not event_task.done():
-                    event_task.cancel()
-                    try:
-                        await event_task
-                    except asyncio.CancelledError:
-                        pass
+                for t in (pump_task, event_task):
+                    if not t.done():
+                        t.cancel()
+                        try:
+                            await t
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
         except websockets.exceptions.InvalidStatusCode as isc:
             status_code = getattr(isc, "status_code", 500)
@@ -309,7 +350,7 @@ class GnaniSTTStreamHandler:
                 err_msg = "Gnani STT authentication failed. Check GNANI_API_KEY."
             elif status_code == 429:
                 err_msg = "Gnani STT rate limit exceeded (HTTP 429)."
-            logger.error(err_msg)
+            logger.error(f"[{session_id}] {err_msg}")
             try:
                 await client_ws.send_json({
                     "type": "error",
@@ -322,7 +363,7 @@ class GnaniSTTStreamHandler:
                 pass
         except Exception as exc:
             sanitized = config.redact_sensitive(str(exc))
-            logger.error(f"Gnani STT streaming session error: {sanitized}")
+            logger.error(f"[{session_id}] Gnani STT streaming session error: {sanitized}")
             try:
                 await client_ws.send_json({
                     "type": "error",
@@ -335,7 +376,8 @@ class GnaniSTTStreamHandler:
                 pass
         finally:
             try:
-                await client_ws.close()
+                if hasattr(client_ws, "client_state") and client_ws.client_state != WebSocketState.DISCONNECTED:
+                    await client_ws.close()
             except Exception:
                 pass
 
