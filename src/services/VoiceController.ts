@@ -967,8 +967,12 @@ export class VoiceController {
    */
   public createPreloadedAudio(blob: Blob): { audio: HTMLAudioElement; url: string } {
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
+    const audio = new Audio();
     audio.preload = 'auto';
+    audio.src = url;
+    try {
+      audio.load();
+    } catch (e) {}
     return { audio, url };
   }
 
@@ -976,9 +980,23 @@ export class VoiceController {
     audioData: { audio: HTMLAudioElement; url: string },
     onEndCallback?: () => void,
     onErrorCallback?: (err: any) => void,
-    onStartCallback?: () => void
+    onStartCallback?: () => void,
+    options?: { isQueueItem?: boolean; isFinal?: boolean }
   ): boolean {
-    this.stopSpeaking();
+    const isQueueItem = options?.isQueueItem ?? false;
+    const isFinal = options?.isFinal ?? true;
+
+    if (!isQueueItem) {
+      this.stopSpeaking();
+    } else {
+      // For queue items, gracefully release any prior audio element without cancelling speaking state
+      if (this.currentAudioElement && this.currentAudioElement !== audioData.audio) {
+        try {
+          this.currentAudioElement.pause();
+        } catch (e) {}
+        this.cleanupAudio();
+      }
+    }
     this.isExplicitlyCancelled = false;
 
     const { audio, url } = audioData;
@@ -993,19 +1011,23 @@ export class VoiceController {
 
     audio.onended = () => {
       this.cleanupAudio();
-      this.isSpeakingActive = false;
-      this.callbacks.onSpeakingEnd?.();
+      if (isFinal) {
+        this.isSpeakingActive = false;
+        this.callbacks.onSpeakingEnd?.();
+      }
       onEndCallback?.();
     };
 
     audio.onerror = (e) => {
       this.cleanupAudio();
-      this.isSpeakingActive = false;
+      if (isFinal) {
+        this.isSpeakingActive = false;
+        this.callbacks.onSpeakingEnd?.();
+      }
       if (!this.isExplicitlyCancelled) {
         this.callbacks.onError?.('Audio playback failed.', false);
         onErrorCallback?.(e);
       }
-      this.callbacks.onSpeakingEnd?.();
       onEndCallback?.();
     };
 
@@ -1014,23 +1036,27 @@ export class VoiceController {
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           this.cleanupAudio();
-          this.isSpeakingActive = false;
+          if (isFinal) {
+            this.isSpeakingActive = false;
+            this.callbacks.onSpeakingEnd?.();
+          }
           if (!this.isExplicitlyCancelled) {
             console.warn('Audio playback error / autoplay rejection:', err);
             this.callbacks.onError?.('Audio playback failed or was blocked by autoplay.', false);
             onErrorCallback?.(err);
           }
-          this.callbacks.onSpeakingEnd?.();
           onEndCallback?.();
         });
       }
       return true;
     } catch (err) {
       this.cleanupAudio();
-      this.isSpeakingActive = false;
-      this.callbacks.onSpeakingEnd?.();
-      onEndCallback?.();
+      if (isFinal) {
+        this.isSpeakingActive = false;
+        this.callbacks.onSpeakingEnd?.();
+      }
       onErrorCallback?.(err);
+      onEndCallback?.();
       return false;
     }
   }
@@ -1121,7 +1147,8 @@ export class VoiceController {
     blob: Blob,
     onEndCallback?: () => void,
     onErrorCallback?: (err: any) => void,
-    onStartCallback?: () => void
+    onStartCallback?: () => void,
+    options?: { isQueueItem?: boolean; isFinal?: boolean }
   ): boolean {
     if (typeof window === 'undefined' || typeof Audio === 'undefined') {
       onErrorCallback?.(new Error('Audio API not available in this environment'));
@@ -1129,7 +1156,19 @@ export class VoiceController {
       return false;
     }
 
-    this.stopSpeaking();
+    const isQueueItem = options?.isQueueItem ?? false;
+    const isFinal = options?.isFinal ?? true;
+
+    if (!isQueueItem) {
+      this.stopSpeaking();
+    } else {
+      if (this.currentAudioElement) {
+        try {
+          this.currentAudioElement.pause();
+        } catch (e) {}
+        this.cleanupAudio();
+      }
+    }
     this.isExplicitlyCancelled = false;
 
     try {
@@ -1146,19 +1185,23 @@ export class VoiceController {
 
       audio.onended = () => {
         this.cleanupAudio();
-        this.isSpeakingActive = false;
-        this.callbacks.onSpeakingEnd?.();
+        if (isFinal) {
+          this.isSpeakingActive = false;
+          this.callbacks.onSpeakingEnd?.();
+        }
         onEndCallback?.();
       };
 
       audio.onerror = (e) => {
         this.cleanupAudio();
-        this.isSpeakingActive = false;
+        if (isFinal) {
+          this.isSpeakingActive = false;
+          this.callbacks.onSpeakingEnd?.();
+        }
         if (!this.isExplicitlyCancelled) {
           this.callbacks.onError?.('Audio playback failed.', false);
           onErrorCallback?.(e);
         }
-        this.callbacks.onSpeakingEnd?.();
         onEndCallback?.();
       };
 
@@ -1166,23 +1209,27 @@ export class VoiceController {
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           this.cleanupAudio();
-          this.isSpeakingActive = false;
+          if (isFinal) {
+            this.isSpeakingActive = false;
+            this.callbacks.onSpeakingEnd?.();
+          }
           if (!this.isExplicitlyCancelled) {
             console.warn('Audio playback error / autoplay rejection:', err);
             this.callbacks.onError?.('Audio playback failed or was blocked by autoplay.', false);
             onErrorCallback?.(err);
           }
-          this.callbacks.onSpeakingEnd?.();
           onEndCallback?.();
         });
       }
       return true;
     } catch (err) {
       this.cleanupAudio();
-      this.isSpeakingActive = false;
-      this.callbacks.onSpeakingEnd?.();
-      onEndCallback?.();
+      if (isFinal) {
+        this.isSpeakingActive = false;
+        this.callbacks.onSpeakingEnd?.();
+      }
       onErrorCallback?.(err);
+      onEndCallback?.();
       return false;
     }
   }

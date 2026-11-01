@@ -155,15 +155,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
             const isLastAgentMsg = !isUser && mIdx === transcript.length - 1;
             const isCurrentlySpeakingThisMsg = !isUser && msg.id === currentSpeakingMsgId;
 
-            // Progressive disclosure sentence count
-            const totalSentences = msg.sentences?.length ?? 1;
-            const revealedCount =
-              revealedSentenceCount[msg.id] !== undefined
-                ? revealedSentenceCount[msg.id]
-                : isCurrentlySpeakingThisMsg
-                ? 0
-                : totalSentences;
-
             return (
               <div
                 key={msg.id}
@@ -204,41 +195,40 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
 
                   {/* Clean natural spoken text with progressive sentence synchronization */}
                   {!isUser && msg.sentences && msg.sentences.length > 0 ? (
-                    revealedCount === 0 && (isCurrentlySpeakingThisMsg || (isLastAgentMsg && playbackState !== 'IDLE')) ? (
-                      <div className="flex items-center gap-2 text-slate-400 py-1.5 text-xs">
-                        <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                        <span className="italic">आवाज़ तैयार हो रही है (Generating neural audio)...</span>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5 leading-relaxed">
-                        {msg.sentences.slice(0, revealedCount).map((sentence, sIdx) => {
-                          const isSpeakingSentence =
-                            isCurrentlySpeakingThisMsg && currentSpeakingSentenceIndex === sIdx;
-                          const isPastSentence =
-                            isCurrentlySpeakingThisMsg &&
-                            currentSpeakingSentenceIndex !== null &&
-                            sIdx < currentSpeakingSentenceIndex;
+                    <div className="space-y-1.5 leading-relaxed">
+                      {isCurrentlySpeakingThisMsg && playbackState === 'GENERATING AUDIO' && (
+                        <div className="flex items-center gap-2 text-slate-400 py-1 text-xs">
+                          <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                          <span className="italic">आवाज़ तैयार हो रही है (Generating audio)...</span>
+                        </div>
+                      )}
+                      {msg.sentences.map((sentence, sIdx) => {
+                        const isSpeakingSentence =
+                          isCurrentlySpeakingThisMsg && currentSpeakingSentenceIndex === sIdx;
+                        const isPastSentence =
+                          isCurrentlySpeakingThisMsg &&
+                          currentSpeakingSentenceIndex !== null &&
+                          sIdx < currentSpeakingSentenceIndex;
 
-                          return (
-                            <p
-                              key={sIdx}
-                              className={`transition-all duration-200 rounded px-1.5 py-0.5 ${
-                                isSpeakingSentence
-                                  ? 'bg-emerald-500/20 text-emerald-200 border-l-2 border-emerald-400 pl-2 font-medium shadow-sm ring-1 ring-emerald-500/40'
-                                  : isPastSentence
-                                  ? 'text-slate-300 opacity-90'
-                                  : 'text-slate-200'
-                              }`}
-                            >
-                              {isSpeakingSentence && (
-                                <Radio className="inline-block w-3 h-3 text-emerald-400 mr-1.5 -mt-0.5 animate-pulse" />
-                              )}
-                              {sentence}
-                            </p>
-                          );
-                        })}
-                      </div>
-                    )
+                        return (
+                          <p
+                            key={sIdx}
+                            className={`transition-all duration-200 rounded px-1.5 py-0.5 ${
+                              isSpeakingSentence
+                                ? 'bg-emerald-500/20 text-emerald-200 border-l-2 border-emerald-400 pl-2 font-medium shadow-sm ring-1 ring-emerald-500/40'
+                                : isPastSentence
+                                ? 'text-slate-300 opacity-90'
+                                : 'text-slate-200'
+                            }`}
+                          >
+                            {isSpeakingSentence && (
+                              <Radio className="inline-block w-3 h-3 text-emerald-400 mr-1.5 -mt-0.5 animate-pulse" />
+                            )}
+                            {sentence}
+                          </p>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                   )}

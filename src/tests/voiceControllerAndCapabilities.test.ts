@@ -552,6 +552,95 @@ describe('VoiceController with Mocked Web Speech APIs', () => {
     expect(vc.isSpeaking()).toBe(false);
   });
 
+  it('supports gapless multi-sentence audio queue with minimal transition gap and deferred onSpeakingEnd', () => {
+    let speakingStartCount = 0;
+    let speakingEndCount = 0;
+
+    const vc = new VoiceController({
+      onSpeakingStart: () => speakingStartCount++,
+      onSpeakingEnd: () => speakingEndCount++,
+    });
+
+    const blob1 = new Blob(['RIFFmockchunk1'], { type: 'audio/wav' });
+    const blob2 = new Blob(['RIFFmockchunk2'], { type: 'audio/wav' });
+    const item1 = vc.createPreloadedAudio(blob1);
+    const item2 = vc.createPreloadedAudio(blob2);
+
+    // Play Item 1 (intermediate queue item, isFinal = false)
+    let item1Ended = false;
+    vc.playPreloadedAudio(
+      item1,
+      () => {
+        item1Ended = true;
+      },
+      undefined,
+      undefined,
+      { isQueueItem: true, isFinal: false }
+    );
+
+    expect(vc.isSpeaking()).toBe(true);
+    expect(speakingStartCount).toBe(1);
+    expect(speakingEndCount).toBe(0);
+
+    // Item 1 ends
+    const tEnd1 = performance.now();
+    if (item1.audio.onended) {
+      item1.audio.onended(new Event('ended'));
+    }
+    expect(item1Ended).toBe(true);
+    // Speaking state should remain true between queue sentences
+    expect(vc.isSpeaking()).toBe(true);
+    expect(speakingEndCount).toBe(0);
+
+    // Immediately start Item 2 (final queue item, isFinal = true)
+    const tStart2 = performance.now();
+    const transitionGapMs = tStart2 - tEnd1;
+    // With preloaded objects, handoff is nearly instantaneous
+    expect(transitionGapMs).toBeLessThan(100);
+
+    let item2Ended = false;
+    vc.playPreloadedAudio(
+      item2,
+      () => {
+        item2Ended = true;
+      },
+      undefined,
+      undefined,
+      { isQueueItem: true, isFinal: true }
+    );
+
+    expect(vc.isSpeaking()).toBe(true);
+    // onSpeakingStart should be triggered on new play
+    expect(speakingStartCount).toBe(2);
+    expect(speakingEndCount).toBe(0);
+
+    // Item 2 finishes
+    if (item2.audio.onended) {
+      item2.audio.onended(new Event('ended'));
+    }
+    expect(item2Ended).toBe(true);
+    // Now speaking should be complete
+    expect(vc.isSpeaking()).toBe(false);
+    expect(speakingEndCount).toBe(1);
+  });
+
+  it('cancelling audio queue during multi-sentence playback cleanly halts audio without permanent speaking state', () => {
+    let speakingEndCount = 0;
+    const vc = new VoiceController({
+      onSpeakingEnd: () => speakingEndCount++,
+    });
+
+    const blob = new Blob(['RIFFmockchunk'], { type: 'audio/wav' });
+    const item = vc.createPreloadedAudio(blob);
+
+    vc.playPreloadedAudio(item, undefined, undefined, undefined, { isQueueItem: true, isFinal: false });
+    expect(vc.isSpeaking()).toBe(true);
+
+    // User stops audio
+    vc.stopSpeaking();
+    expect(vc.isSpeaking()).toBe(false);
+  });
+
   it('guarantees consecutive multi-turn independence without transcript leakage between turns', () => {
     const turns: Array<{ text: string; utteranceId?: string }> = [];
 

@@ -199,12 +199,19 @@ class LLMOrchestrator(BaseConversationProvider):
         # -------------------------------------------------------------
         session_zone = self._session_zones.get(session_key)
         resolved_zone = zone_id or session_zone or telemetry_service.get_active_zone_id()
-        if any(w in lower_trimmed for w in ["zone 1", "zone-1", "जोन 1", "ज़ोन 1", "wheat", "गेहूं", "गेहु"]):
+        zone_explicitly_mentioned = False
+        if any(w in lower_trimmed for w in ["zone 1", "zone-1", "जोन 1", "ज़ोन 1", "wheat", "गेहूं", "गेहु", "north", "उत्तर"]):
             resolved_zone = "DEMO-ZONE-001"
-        elif any(w in lower_trimmed for w in ["zone 2", "zone-2", "जोन 2", "ज़ोन 2", "cotton", "कपास"]):
+            zone_explicitly_mentioned = True
+        elif any(w in lower_trimmed for w in ["zone 2", "zone-2", "जोन 2", "ज़ोन 2", "cotton", "कपास", "south", "दक्षिण"]):
             resolved_zone = "DEMO-ZONE-002"
-        elif any(w in lower_trimmed for w in ["zone 3", "zone-3", "जोन 3", "ज़ोन 3", "tomato", "टमाटर"]):
+            zone_explicitly_mentioned = True
+        elif any(w in lower_trimmed for w in ["zone 3", "zone-3", "जोन 3", "ज़ोन 3", "tomato", "टमाटर", "east", "पूर्व"]):
             resolved_zone = "DEMO-ZONE-003"
+            zone_explicitly_mentioned = True
+        elif any(w in lower_trimmed for w in ["zone 4", "zone-4", "जोन 4", "ज़ोन 4", "mustard", "sarson", "सरसों", "gram", "चना", "west", "पश्चिम"]):
+            resolved_zone = "DEMO-ZONE-004"
+            zone_explicitly_mentioned = True
 
         self._session_zones[session_key] = resolved_zone
 
@@ -245,6 +252,11 @@ class LLMOrchestrator(BaseConversationProvider):
             "हानि", "परीक्षण", "टेस्ट", "कारण", "प्रबंधन", "उर्वरता", "प्रभाव",
         ])
 
+        # Factual farm status and telemetry requests are never treated as conceptual lectures
+        if re.search(r"(खेत\s*की\s*(स्थिति|जानकारी|हालत|रिपोर्ट)|खेत\s*का\s*(हाल|हालचाल)|farm\s*status|khet\s*(ki|ka)\s*(jankari|haal|status|report|sthiti))", trimmed, re.IGNORECASE) or \
+           re.search(r"(नमी|moisture|तापमान|temperature|बैटरी|battery|टंकी|tank|पीएच|ph)\s*(कितनी|कितना|क्या|कैसी|कैसा|status)", trimmed, re.IGNORECASE):
+            is_conceptual_or_exploratory = False
+
         # -------------------------------------------------------------
         # 1. Fast-Path Conversational & Literal Telemetry Filter
         # -------------------------------------------------------------
@@ -258,7 +270,7 @@ class LLMOrchestrator(BaseConversationProvider):
         )
 
         has_substantive_query = bool(re.search(
-            r"(नमी|moisture|पानी|water|सिंचाई|irrigation|फसल|crop|पीएच|ph|खाद|fertilizer|बैटरी|battery|तापमान|temp|कीट|रोग|disease|मौसम|weather|यूरिया|dap|npk|कितनी|कितना|कब|कहा|कैसी|स्थिति|हालत|how|what|when|why|status|tank|टंकी)",
+            r"(नमी|moisture|पानी|water|सिंचाई|irrigation|फसल|crop|पीएच|ph|खाद|fertilizer|बैटरी|battery|तापमान|temp|कीट|रोग|disease|मौसम|weather|यूरिया|dap|npk|कितनी|कितना|कब|कहा|कैसी|कैसा|स्थिति|हालत|हाल|how|what|when|why|status|tank|टंकी|खेत|khet|जानकारी|jankari|समस्या|samasya|दिक्कत|dikkat|खराबी|परेशानी|चल\s*रही|बताओ|बताएं|दिखाओ|दिखाएं|अपडेट|रिपोर्ट|सात|हफ्ता|दिन)",
             trimmed,
             re.IGNORECASE,
         ))
@@ -763,9 +775,9 @@ class LLMOrchestrator(BaseConversationProvider):
         # Scenario 1: Direct Soil Moisture Query (Literal)
         # -------------------------------------------------------------
         if not is_conceptual_or_exploratory and (
-            re.search(r"\b(soil\s*moisture|current\s*moisture|moisture\s*level|how\s*much\s*moisture)\b", trimmed, re.IGNORECASE)
-            or re.search(r"(मिट्टी\s*की\s*नमी|नमी\s*कितनी\s*है|नमी\s*का\s*स्तर)", trimmed, re.IGNORECASE)
-        ):
+            re.search(r"\b(soil\s*moisture|current\s*moisture|moisture\s*level|how\s*much\s*moisture|moisture)\b", trimmed, re.IGNORECASE)
+            or re.search(r"(मिट्टी\s*की\s*नमी|नमी|moisture)", trimmed, re.IGNORECASE)
+        ) and not any(w in lower_trimmed for w in ["trend", "history", "बदलाव", "बदली", "पिछले", "7 days", "24 hours", "saturation", "सैचुरेशन", "waterlogging", "जलभराव"]):
             tel_res = await self._tools["latest_telemetry"].execute(zone_id=resolved_zone)
             moisture = tel_res.get("soil_moisture_pct")
             zone_name = tel_res.get("zone_name", resolved_zone)
@@ -899,9 +911,9 @@ class LLMOrchestrator(BaseConversationProvider):
         # pH & Temperature Query (Literal Sensor Value)
         # -------------------------------------------------------------
         if not is_conceptual_or_exploratory and (
-            re.search(r"^\s*(ph|temperature|temp|soil\s*temp|ska\s*ph|uska\s*ph|current\s*ph)\s*$", trimmed, re.IGNORECASE)
-            or re.search(r"^\s*(ph|पीएच|तापमान|soil\s*temp|उसका\s*ph)\s*$", trimmed, re.IGNORECASE)
-        ):
+            re.search(r"\b(ph|temperature|temp|soil\s*temp)\b", trimmed, re.IGNORECASE)
+            or re.search(r"(पीएच|तापमान|soil\s*temp)", trimmed, re.IGNORECASE)
+        ) and not any(w in lower_trimmed for w in ["kya hota", "matlab", "explain", "samjhao", "meaning", "असर", "प्रभाव", "अंतर"]):
             tel_res = await self._tools["latest_telemetry"].execute(zone_id=resolved_zone)
             ph = tel_res.get("ph")
             temp = tel_res.get("soil_temperature_c")
@@ -1041,25 +1053,65 @@ class LLMOrchestrator(BaseConversationProvider):
             )
 
         # -------------------------------------------------------------
-        # Farm Overall Condition Query (Literal)
+        # Farm Overall Condition Query (All 4 Zones Dynamic Telemetry)
         # -------------------------------------------------------------
         if not is_conceptual_or_exploratory and (
             re.search(r"\b(overall\s*condition|overall\s*farm|farm\s*overview|entire\s*farm|overall\s*status)\b", trimmed, re.IGNORECASE)
             or re.search(r"(पूरे\s*खेत\s*की\s*स्थिति|overall\s*condition|खेत\s*का\s*हाल)", trimmed, re.IGNORECASE)
+            or (not zone_explicitly_mentioned and re.search(r"(खेत\s*की\s*(स्थिति|जानकारी|हालत|रिपोर्ट)|khet\s*ki\s*jankari|farm\s*status)", trimmed, re.IGNORECASE))
         ):
-            tank = telemetry_service.get_water_tank_level().get("water_tank_level_pct", 82.0)
+            overview = telemetry_service.get_farm_overview()
+            tank_pct = int(telemetry_service.get_water_tank_level().get("water_tank_level_pct", 82.0))
+            farm_name = overview.get("farm_name", "Green Valley Agro Farm")
+
+            zone_parts_hi = []
+            zone_parts_en = []
+
+            for idx, z in enumerate(overview.get("zones", []), 1):
+                zname = z.get("zone_name", f"Zone {idx}")
+                crop = z.get("crop", "crop")
+                crop_hi = {"wheat": "गेहूं", "cotton": "कपास", "tomato": "टमाटर", "mustard": "सरसों"}.get(crop.lower(), crop)
+                m = z.get("soil_moisture_pct")
+                bat = z.get("battery_level_pct")
+                missing = z.get("missing_fields", [])
+
+                if m is None:
+                    m_eval_hi = "नमी: अनुपलब्ध"
+                    m_eval_en = "Soil Moisture: unavailable"
+                elif m < 35.0:
+                    m_eval_hi = f"नमी {m}% (कम / सिंचाई आवश्यक)"
+                    m_eval_en = f"Soil Moisture {m}% (dry / irrigation needed)"
+                elif m > 60.0:
+                    m_eval_hi = f"नमी {m}% (अधिक / जलभराव जोखिम)"
+                    m_eval_en = f"Soil Moisture {m}% (high / saturation risk)"
+                else:
+                    m_eval_hi = f"नमी {m}% (अनुकूल)"
+                    m_eval_en = f"Soil Moisture {m}% (optimal)"
+
+                flags_hi = []
+                flags_en = []
+                if missing:
+                    flags_hi.append(f"{', '.join(missing)} सेंसर अनकैलिब्रेटेड")
+                    flags_en.append(f"{', '.join(missing)} uncalibrated")
+                if bat is not None and bat < 20.0:
+                    flags_hi.append(f"डिवाइस बैटरी {bat}% (कम)")
+                    flags_en.append(f"low battery {bat}%")
+
+                f_hi = f" [{', '.join(flags_hi)}]" if flags_hi else ""
+                f_en = f" [{', '.join(flags_en)}]" if flags_en else ""
+
+                zone_parts_hi.append(f"{idx}. {crop_hi} ज़ोन ({zname}): {m_eval_hi}{f_hi}")
+                zone_parts_en.append(f"{idx}. {crop.title()} Zone ({zname}): {m_eval_en}{f_en}")
+
+            joined_hi = "। ".join(zone_parts_hi)
+            joined_en = ". ".join(zone_parts_en)
+
             reply = (
-                "आपके पूरे खेत (Green Valley Agro Farm) का समग्र अवलोकन: "
-                "1. गेहूं ज़ोन (Zone 1): नमी 48.2% (अनुकूल) और मिट्टी संतुलित है। "
-                "2. कॉटन ज़ोन (Zone 2): नमी 28.5% (कम), जहां डिवाइस बैटरी 16% है। "
-                "3. टमाटर ज़ोन (Zone 3): नमी 64.5% (अधिक/जलभराव जोखिम) और नाइट्रोजन सेंसर अनकैलिब्रेटेड है। "
-                f"मुख्य पानी का टैंक {tank}% भरा हुआ है। (सिमुलेटेड टेलीमेट्री)"
+                f"आपके पूरे खेत ({farm_name}) का वास्तविक समग्र अवलोकन: {joined_hi}। "
+                f"मुख्य पानी का टैंक {tank_pct}% भरा हुआ है। (सिमुलेटेड टेलीमेट्री)"
                 if is_hindi
-                else "Overall farm overview for Green Valley Agro Farm: "
-                "1. Wheat Field (Zone 1): 48.2% moisture (optimal) with balanced soil conditions. "
-                "2. Cotton Plot (Zone 2): 28.5% moisture (dry) with a 16% low battery alert. "
-                "3. Tomato Polyhouse (Zone 3): 64.5% moisture (saturation risk) with uncalibrated nitrogen sensor. "
-                f"Main water reservoir is at {tank}% capacity. (Simulated Farm Overview)"
+                else f"Real-time overview for {farm_name}: {joined_en}. "
+                f"Main water reservoir is at {tank_pct}%. (Simulated Telemetry)"
             )
             self._last_responses[session_key] = reply
             trace.append(ExecutionTraceStep(
@@ -1071,13 +1123,13 @@ class LLMOrchestrator(BaseConversationProvider):
             ))
             return self._build_response(
                 reply=reply,
-                intent="farm_overall_query",
+                intent="farm_status",
                 confidence=1.0,
                 repeatable=True,
                 execution_trace=trace,
                 provider_status="fast_path",
-                sources=["Simulated Farm Telemetry Overview"],
-                metadata={"tank_level_pct": tank},
+                sources=["Simulated 4-Zone Farm Telemetry Overview"],
+                metadata={"tank_level_pct": tank_pct, "zones_reported": len(overview.get("zones", []))},
             )
 
         # -------------------------------------------------------------
@@ -1136,7 +1188,7 @@ class LLMOrchestrator(BaseConversationProvider):
                 provider_status="fast_path",
                 sources=[f"Simulated Hardware ({dev_id})"],
                 warnings=dev_res.get("warnings", []),
-                metadata={"device_id": dev_id, "battery_pct": bat, "status": st},
+                metadata={"zone_id": resolved_zone, "device_id": dev_id, "battery_pct": bat, "status": st},
             )
 
         # -------------------------------------------------------------
@@ -1180,8 +1232,9 @@ class LLMOrchestrator(BaseConversationProvider):
         # Scenario 8: Historical Trend (7 Days or 24 Hours)
         # -------------------------------------------------------------
         if (
-            re.search(r"\b(pichhle|past|last)\s*(7\s*days?|24\s*hours?|week|दिन)\b", trimmed, re.IGNORECASE)
-            or re.search(r"\b(trend|change|history|बदलाव|इतिहास)\b", trimmed, re.IGNORECASE)
+            re.search(r"\b(pichhle|past|last|previous)\s*(7\s*days?|24\s*hours?|week|days?)\b", trimmed, re.IGNORECASE)
+            or re.search(r"(पिछले|बीते)\s*(7|सात|24|चौबीस)?\s*(दिनों?|घंटों?|हफ़्ते|हफ्ते)?", trimmed)
+            or re.search(r"\b(trend|change|history|बदलाव|बदली|बदल|इतिहास|रुझान)\b", trimmed, re.IGNORECASE)
         ):
             t_range = "24h" if "24" in lower_trimmed else "7d"
             hist_res = await self._tools["historical_telemetry"].execute(
@@ -1221,7 +1274,8 @@ class LLMOrchestrator(BaseConversationProvider):
         # Scenario 9: Alerts (Literal)
         # -------------------------------------------------------------
         if (
-            re.search(r"\b(alerts?|warnings?|अलर्ट|चेतावनी)\b", trimmed, re.IGNORECASE)
+            re.search(r"\b(alerts?|warnings?|problems?|issues?|faults?)\b", trimmed, re.IGNORECASE)
+            or re.search(r"(अलर्ट|चेतावनी|समस्या|दिक्कत|खराबी|परेशानी|गड़बड़)", trimmed)
         ):
             alert_res = await self._tools["alert_history"].execute(zone_id=resolved_zone)
             alerts = alert_res.get("alerts", [])
@@ -1236,9 +1290,9 @@ class LLMOrchestrator(BaseConversationProvider):
                 )
             else:
                 reply = (
-                    "आज आपके खेत या सेंसर में कोई सक्रिय अलर्ट नहीं है। सभी सिस्टम सामान्य हैं।"
+                    "आज आपके खेत या सेंसर में कोई सक्रिय अलर्ट या समस्या नहीं है। सभी सिस्टम सामान्य रूप से काम कर रहे हैं।"
                     if is_hindi
-                    else "There are no active alerts for your farm today. All sensor systems are operational."
+                    else "There are no active alerts or problems for your farm today. All sensor systems are operational."
                 )
 
             self._last_responses[session_key] = reply
@@ -1260,23 +1314,54 @@ class LLMOrchestrator(BaseConversationProvider):
                 metadata={"total_alerts": total},
             )
 
-        # Legacy Farm Status fast-path
-        if not is_conceptual_or_exploratory and (
-            re.search(r"^\s*(farm\s+status|field\s+status|telemetry)\s*$", trimmed, re.IGNORECASE)
-            or re.search(r"^\s*(खेत\s*की\s*स्थिति|सेंसर\s*स्थिति|टेलीमेट्री)\s*$", trimmed)
-        ):
+        # Farm Status / Overview fast-path
+        is_farm_status = (
+            re.search(r"\b(farm\s+status|field\s+status|farm\s+overview|field\s+overview|farm\s+info|field\s+info|telemetry)\b", trimmed, re.IGNORECASE)
+            or re.search(r"\b(khet\s*(ki|ka)\s*(jankari|haal|status|report|sthiti))\b", trimmed, re.IGNORECASE)
+            or re.search(r"((खेत|ज़ोन|zone)\s*की\s*(स्थिति|जानकारी|हालत|अपडेट|रिपोर्ट)|(खेत|ज़ोन|zone)\s*का\s*(हाल|हालचाल)|सेंसर\s*स्थिति|फार्म\s*का\s*स्टेटस|फार्म\s*स्टेटस|टेलीमेट्री)", trimmed, re.IGNORECASE)
+        )
+        if not is_conceptual_or_exploratory and is_farm_status:
             telemetry_res = await self._tools["latest_telemetry"].execute(zone_id=resolved_zone)
-            moisture = telemetry_res.get("soil_moisture_pct", 48.2)
-            temp = telemetry_res.get("soil_temperature_c", 22.4)
-            tank = int(telemetry_res.get("water_tank_level_pct", 82))
+            moisture = telemetry_res.get("soil_moisture_pct")
+            temp = telemetry_res.get("soil_temperature_c")
+            tank = telemetry_res.get("water_tank_level_pct")
+            battery = telemetry_res.get("battery_level_pct")
+            missing_fields = telemetry_res.get("missing_fields", [])
             zone_name = telemetry_res.get("zone_name", resolved_zone)
+            crop_name = telemetry_res.get("crop", "crop")
+            crop_hindi = {"wheat": "गेहूं", "cotton": "कपास", "tomato": "टमाटर", "mustard": "सरसों"}.get(crop_name.lower(), crop_name)
+
+            if moisture is None:
+                m_str_hi = "नमी: अनुपलब्ध"
+                m_str_en = "Soil Moisture: unavailable"
+            elif moisture < 35.0:
+                m_str_hi = f"मिट्टी की नमी: {moisture}% (कम / सिंचाई आवश्यक)"
+                m_str_en = f"Soil Moisture: {moisture}% (Deficit - Irrigation Recommended)"
+            elif moisture > 60.0:
+                m_str_hi = f"मिट्टी की नमी: {moisture}% (अधिक / जलभराव जोखिम)"
+                m_str_en = f"Soil Moisture: {moisture}% (High - Saturation Risk)"
+            else:
+                m_str_hi = f"मिट्टी की नमी: {moisture}% (अनुकूल)"
+                m_str_en = f"Soil Moisture: {moisture}% (Optimal)"
+
+            hw_alerts_hi = []
+            hw_alerts_en = []
+            if missing_fields:
+                hw_alerts_hi.append(f"सेंसर चेतावनी: {', '.join(missing_fields)} अनकैलिब्रेटेड है")
+                hw_alerts_en.append(f"Sensor Warning: {', '.join(missing_fields)} uncalibrated")
+            if battery is not None and battery < 20.0:
+                hw_alerts_hi.append(f"डिवाइस बैटरी {battery}% (कम)")
+                hw_alerts_en.append(f"Device battery {battery}% (low)")
+
+            hw_str_hi = f"। {', '.join(hw_alerts_hi)}" if hw_alerts_hi else "। सभी सिमुलेटेड सेंसर ऑनलाइन हैं"
+            hw_str_en = f". {', '.join(hw_alerts_en)}" if hw_alerts_en else ". All simulated sensors are online"
 
             reply = (
-                f"[{zone_name} टेलीमेट्री] मिट्टी की नमी: {moisture}% (अनुकूल)। मिट्टी का तापमान: {temp}°C। "
-                f"पानी का टैंक: {tank}%। सभी सिमुलेटेड सेंसर ऑनलाइन हैं।"
+                f"[{zone_name} टेलीमेट्री] फसल: {crop_hindi}। {m_str_hi}। "
+                f"मिट्टी का तापमान: {temp}°C। पानी का टैंक: {int(tank or 0)}%{hw_str_hi}।"
                 if is_hindi
-                else f"[{zone_name} TELEMETRY] Soil Moisture: {moisture}% (Optimal). Soil Temp: {temp}°C. "
-                f"Water Tank: {tank}%. All simulated sensors are online."
+                else f"[{zone_name} TELEMETRY] Crop: {crop_name.title()}. {m_str_en}. "
+                f"Soil Temp: {temp}°C. Water Tank: {int(tank or 0)}%{hw_str_en}."
             )
             self._last_responses[session_key] = reply
             trace.append(ExecutionTraceStep(
@@ -1335,9 +1420,10 @@ class LLMOrchestrator(BaseConversationProvider):
             "weather", "mausam", "rain", "barish", "temp", "taapman", "fertilizer", "khad", "urea",
             "dap", "npk", "ph", "ec", "conductivity", "pest", "keet", "disease", "rog", "leaf",
             "patti", "wheat", "gehu", "cotton", "kapas", "tomato", "tamatar", "rice", "dhan",
-            "mustard", "sarson", "maize", "makka", "sugarcane", "ganna", "potato", "aloo",
+            "mustard", "sarson", "maize", "makka", "sugarcane", "ganna", "potato", "aloo", "gram", "chana",
             "probe", "sensor", "device", "battery", "tank", "tiki", "alert", "warning", "kheti",
-            "farm", "harvest", "sowing", "buwai", "yield", "upaj", "organic", "jaivik",
+            "farm", "khet", "jankari", "samasya", "dikkat", "problem", "issue", "trend", "history",
+            "harvest", "sowing", "buwai", "yield", "upaj", "organic", "jaivik",
             "rotation", "chakar", "tractor", "pump", "valve", "sprinkler", "drip", "tillering",
             "flower", "phool", "seed", "beej", "root", "jad", "canal", "nahar", "well", "kuan",
             "tubewell", "boring", "kisan", "farmer", "zone", "sector", "chlorosis", "peeli", "pila",
@@ -1345,8 +1431,10 @@ class LLMOrchestrator(BaseConversationProvider):
         ]) or any(k in trimmed for k in [
             "फसल", "मिट्टी", "नमी", "पानी", "सिंचाई", "मौसम", "बारिश", "तापमान", "खाद", "यूरिया",
             "डीएपी", "कीट", "रोग", "पत्ती", "गेहूं", "कपास", "टमाटर", "धान", "सरसों", "मक्का",
-            "आलू", "सेंसर", "डिवाइस", "बैटरी", "टंकी", "अलर्ट", "खेती", "किसान", "उपज", "बुवाई",
-            "जैविक", "पंप", "वॉल्व", "ड्रिप", "जड़", "फूल", "बीज", "पीली", "सलाह", "रिपोर्ट"
+            "आलू", "चना", "सेंसर", "डिवाइस", "बैटरी", "टंकी", "अलर्ट", "खेती", "किसान", "उपज", "बुवाई",
+            "जैविक", "पंप", "वॉल्व", "ड्रिप", "जड़", "फूल", "बीज", "पीली", "सलाह", "रिपोर्ट",
+            "खेत", "जानकारी", "स्थिति", "हाल", "हालत", "समस्या", "दिक्कत", "खराबी", "परेशानी",
+            "बताओ", "बताएं", "दिखाओ", "दिखाएं", "चल रही", "सात", "हफ्ता", "दिन", "अपडेट"
         ])
 
         if not is_agricultural_topic and not is_conceptual_or_exploratory and not has_substantive_query:
@@ -1396,8 +1484,8 @@ class LLMOrchestrator(BaseConversationProvider):
             if any(w in lower_m for w in [
                 "yellow", "leaf", "leaves", "chlorosis", "spot", "disease", "पत्ती", "पीली",
                 "npk", "ph", "ec", "soil", "crop", "uga", "rotation", "organic", "fertility", "test",
-                "nitrogen", "phosphorus", "potassium", "suitab", "wheat", "cotton", "tomato",
-                "कीट", "रोग", "खाद", "उर्वरक", "फसल", "मिट्टी", "उपज", "सुधार", "सल्फर", "जिंक"
+                "nitrogen", "phosphorus", "potassium", "suitab", "wheat", "cotton", "tomato", "mustard", "sarson", "gram", "chana",
+                "कीट", "रोग", "खाद", "उर्वरक", "फसल", "मिट्टी", "उपज", "सुधार", "सल्फर", "जिंक", "सरसों", "चना", "खेत", "जानकारी"
             ]):
                 selected.append("crop_symptom")
             if any(w in lower_m for w in [
@@ -1411,9 +1499,9 @@ class LLMOrchestrator(BaseConversationProvider):
             ]) or any(w in trimmed for w in ["मौसम", "बारिश", "तापमान"]):
                 selected.append("weather_context")
             if any(w in lower_m for w in [
-                "battery", "device", "tank", "alert", "बैटरी", "अलर्ट", "सेंसर", "probe",
-                "hardware", "डिवाइस", "टंकी"
-            ]) or any(w in trimmed for w in ["बैटरी", "डिवाइस", "सेंसर", "अलर्ट", "टंकी"]):
+                "battery", "device", "tank", "alert", "warning", "problem", "issue", "fault",
+                "बैटरी", "अलर्ट", "सेंसर", "probe", "hardware", "डिवाइस", "टंकी", "समस्या", "दिक्कत", "खराबी"
+            ]) or any(w in trimmed for w in ["बैटरी", "डिवाइस", "सेंसर", "अलर्ट", "टंकी", "समस्या", "दिक्कत", "खराबी"]):
                 selected.append("device_health")
 
             # Rain forecast directly impacts irrigation decisions
@@ -1634,6 +1722,13 @@ class LLMOrchestrator(BaseConversationProvider):
             "- When needs_clarification=True, provide a short, specific clarification_prompt in the response language. Otherwise set needs_clarification=False and clarification_prompt=None."
         )
 
+        agronomic_safety_rule = (
+            "AGRONOMIC & SENSOR ACCURACY POLICY:\n"
+            "- Fertilizer Dosage: For questions about fertilizer quantities (e.g. Urea, DAP, NPK), NEVER provide an unconditional universal dosage as fact. Clearly label illustrative recommendations (e.g. standard reference dosage for the crop) and advise that actual dosage must be verified through laboratory soil testing and crop growth stage.\n"
+            "- Sodium / Salinity: The 7-in-1 sensor measures Electrical Conductivity (EC), NOT Sodium (Na). NEVER derive sodium concentrations from EC. Note that certified laboratory wet-chemistry testing is required for sodium/SAR analysis.\n"
+            "- Soil Parameters: Reference actual simulated sensor readings (Moisture %, Soil Temp °C, EC dS/m, pH, Nitrogen, Phosphorus, Potassium) accurately without inventing values."
+        )
+
         synth_prompt = (
             f"User Question: '{trimmed}'\n"
             f"Language: {'Hindi' if is_hindi else 'English'}\n"
@@ -1643,6 +1738,7 @@ class LLMOrchestrator(BaseConversationProvider):
             f"{greeting_rule}\n\n"
             f"{conciseness_rule}\n\n"
             f"{clarification_rule}\n\n"
+            f"{agronomic_safety_rule}\n\n"
             f"Requirements:\n"
             f"1. Directly answer the farmer's question in natural {'Hindi (using clean Devanagari script)' if is_hindi else 'English'}.\n"
             f"2. Reference actual simulated sensor readings (moisture, pH, NPK, EC) when explaining farm condition or suitability.\n"

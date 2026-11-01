@@ -302,141 +302,184 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         chunks.push({ text: sentences.join(' '), targetRevealedCount: sentences.length });
       }
 
-      // Pre-fetch cache for next sentence audio
-      let prefetchPromise: Promise<Blob | null> | null = null;
-      let nextPreloadedAudio: { audio: HTMLAudioElement; url: string } | null = null;
+      // Parallel Lookahead Prefetch Pipeline
+      const prefetchMap = new Map<number, Promise<{ audio: HTMLAudioElement; url: string } | null>>();
+      const preloadedObjects: Array<{ audio: HTMLAudioElement; url: string }> = [];
 
-      const fetchSentenceTTS = async (textToSpeak: string): Promise<Blob | null> => {
+      const cleanupPreloaded = () => {
+        for (const item of preloadedObjects) {
+          try {
+            item.audio.pause();
+            item.audio.currentTime = 0;
+            URL.revokeObjectURL(item.url);
+          } catch (e) {}
+        }
+        preloadedObjects.length = 0;
+      };
+
+      const fetchChunkTTS = async (
+        chunkIdx: number
+      ): Promise<{ audio: HTMLAudioElement; url: string } | null> => {
+        if (chunkIdx >= chunks.length || abortSignal.aborted) return null;
+        const chunkText = chunks[chunkIdx].text;
+        const tReqStart = performance.now();
+
         try {
+          const timeoutCtrl = new AbortController();
+          const timer = setTimeout(() => timeoutCtrl.abort(), 10000);
+          const onParentAbort = () => timeoutCtrl.abort();
+          if (abortSignal.aborted) return null;
+          abortSignal.addEventListener('abort', onParentAbort);
+
           const res = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              text: textToSpeak,
+              text: chunkText,
               language,
               voice_id: selectedVoice,
               speed: ttsSpeed,
             }),
-            signal: abortSignal,
+            signal: timeoutCtrl.signal,
           });
+          clearTimeout(timer);
+          abortSignal.removeEventListener('abort', onParentAbort);
+
+          const tReqEnd = performance.now();
           const ct = res.headers.get('content-type') || '';
           if (res.ok && ct.startsWith('audio/')) {
             const blob = await res.blob();
-            if (blob.size > 44) return blob;
+            if (blob.size > 44 && !abortSignal.aborted) {
+              const preloaded = vc.createPreloadedAudio(blob);
+              preloadedObjects.push(preloaded);
+              console.log(
+                `[TTS:Prefetch] Chunk ${chunkIdx + 1}/${chunks.length} ready in ${Math.round(
+                  tReqEnd - tReqStart
+                )}ms (${blob.size} bytes)`
+              );
+              return preloaded;
+            }
           }
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            console.warn('Sentence TTS fetch error:', e);
+            console.warn(`[TTS:Prefetch] Chunk ${chunkIdx + 1} fetch error:`, e);
           }
         }
         return null;
       };
 
+      const getOrPrefetch = (
+        chunkIdx: number
+      ): Promise<{ audio: HTMLAudioElement; url: string } | null> => {
+        if (chunkIdx >= chunks.length || abortSignal.aborted) return Promise.resolve(null);
+        if (!prefetchMap.has(chunkIdx)) {
+          prefetchMap.set(chunkIdx, fetchChunkTTS(chunkIdx));
+        }
+        return prefetchMap.get(chunkIdx)!;
+      };
+
+      // Immediately initiate prefetch for Chunk 0 AND Chunk 1 in parallel
+      getOrPrefetch(0);
+      if (chunks.length > 1) {
+        getOrPrefetch(1);
+      }
+
+      let previousAudioEndTime: number | null = null;
+      const measuredTransitionGaps: number[] = [];
+
       for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
         if (abortSignal.aborted) break;
 
+        const isLastChunk = cIdx === chunks.length - 1;
         const currentChunk = chunks[cIdx];
-        setCurrentSpeakingSentenceIndex(cIdx);
 
-        // Case A: Live Gnani Neural TTS
+        // Trigger lookahead prefetch for next 2 chunks while current chunk is prepared/played
+        if (cIdx + 1 < chunks.length) getOrPrefetch(cIdx + 1);
+        if (cIdx + 2 < chunks.length) getOrPrefetch(cIdx + 2);
+
+        // Await audio for current chunk
+        let preloaded: { audio: HTMLAudioElement; url: string } | null = null;
         if (ttsProvider === 'gnani' && gnaniConfigured) {
-          setGyaniAudioStatus('GNANI AUDIO GENERATING');
-          setPlaybackState('GENERATING AUDIO');
-
-          // Get audio blob (either preloaded, pre-fetched, or fetch now)
-          let audioBlob: Blob | null = null;
-          const preloadedObj = nextPreloadedAudio;
-          nextPreloadedAudio = null;
-
-          if (!preloadedObj) {
-            if (prefetchPromise) {
-              audioBlob = await prefetchPromise;
-              prefetchPromise = null;
-            }
-            if (!audioBlob && !abortSignal.aborted) {
-              audioBlob = await fetchSentenceTTS(currentChunk.text);
-            }
+          // If chunk 0 is still downloading, show generating status; otherwise maintain continuous speaking
+          if (cIdx === 0 && !prefetchMap.get(0)) {
+            setGyaniAudioStatus('GNANI AUDIO GENERATING');
+            setPlaybackState('GENERATING AUDIO');
           }
-
-          if (abortSignal.aborted) break;
-
-          if (preloadedObj || audioBlob) {
-            // Progressive sentence disclosure: reveal this chunk as its audio starts
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
-            setGyaniAudioStatus('GNANI AUDIO PLAYING');
-            setPlaybackState('SPEAKING');
-
-            // While current sentence plays, start pre-fetching & pre-loading the NEXT sentence!
-            if (cIdx + 1 < chunks.length && !abortSignal.aborted) {
-              const nextChunk = chunks[cIdx + 1];
-              prefetchPromise = fetchSentenceTTS(nextChunk.text).then((blob) => {
-                if (blob && !abortSignal.aborted) {
-                  try {
-                    nextPreloadedAudio = vc.createPreloadedAudio(blob);
-                  } catch {}
-                }
-                return blob;
-              });
-            }
-
-            // Play audio and await end
-            await new Promise<void>((resolve) => {
-              let played = false;
-              if (preloadedObj) {
-                played = vc.playPreloadedAudio(
-                  preloadedObj,
-                  () => resolve(),
-                  () => resolve(),
-                  () => {
-                    setGyaniAudioStatus('GNANI AUDIO PLAYING');
-                    setPlaybackState('SPEAKING');
-                  }
-                );
-              } else if (audioBlob) {
-                played = vc.playAudioBlob(
-                  audioBlob,
-                  () => resolve(),
-                  () => resolve(),
-                  () => {
-                    setGyaniAudioStatus('GNANI AUDIO PLAYING');
-                    setPlaybackState('SPEAKING');
-                  }
-                );
-              }
-              if (!played) resolve();
-            });
-          } else {
-            // If TTS fetch failed for this sentence, fall back to browser speech for this sentence
-            if (capabilities.speechSynthesisSupported && !abortSignal.aborted) {
-              setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
-              setPlaybackState('SPEAKING');
-              await new Promise<void>((resolve) => {
-                vc.speak(currentChunk.text, () => resolve());
-              });
-            }
-          }
+          preloaded = await getOrPrefetch(cIdx);
+        } else if (ttsProvider === 'mock') {
+          preloaded = await getOrPrefetch(cIdx);
         }
-        // Case B: Mock Test Tone
-        else if (ttsProvider === 'mock') {
-          setPlaybackState('SPEAKING');
-          const mockBlob = await fetchSentenceTTS(currentChunk.text);
-          if (mockBlob && !abortSignal.aborted) {
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
-            await new Promise<void>((resolve) => {
-              vc.playAudioBlob(mockBlob, () => resolve());
-            });
-          }
+
+        if (abortSignal.aborted) break;
+
+        // Record inter-sentence gap metrics
+        const tPlaybackCall = performance.now();
+        if (previousAudioEndTime !== null) {
+          const gapMs = tPlaybackCall - previousAudioEndTime;
+          measuredTransitionGaps.push(gapMs);
+          console.log(
+            `[TTS:Timing] Inter-sentence gap between sentence ${cIdx} and ${cIdx + 1}: ${Math.round(
+              gapMs
+            )}ms`
+          );
+        }
+
+        setCurrentSpeakingSentenceIndex(cIdx);
+        setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
+        setPlaybackState('SPEAKING');
+
+        // Case A & B: Preloaded Neural / Mock Audio with gapless queue handoff
+        if (preloaded) {
+          setGyaniAudioStatus(ttsProvider === 'gnani' ? 'GNANI AUDIO PLAYING' : 'IDLE');
+
+          await new Promise<void>((resolve) => {
+            const played = vc.playPreloadedAudio(
+              preloaded!,
+              () => {
+                previousAudioEndTime = performance.now();
+                resolve();
+              },
+              () => {
+                previousAudioEndTime = performance.now();
+                resolve();
+              },
+              () => {
+                setGyaniAudioStatus('GNANI AUDIO PLAYING');
+                setPlaybackState('SPEAKING');
+              },
+              { isQueueItem: true, isFinal: isLastChunk }
+            );
+            if (!played) {
+              previousAudioEndTime = performance.now();
+              resolve();
+            }
+          });
         }
         // Case C: Browser Native SpeechSynthesis
         else {
-          setPlaybackState('SPEAKING');
           if (capabilities.speechSynthesisSupported && !abortSignal.aborted) {
-            setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: currentChunk.targetRevealedCount }));
             await new Promise<void>((resolve) => {
-              vc.speak(currentChunk.text, () => resolve());
+              vc.speak(currentChunk.text, () => {
+                previousAudioEndTime = performance.now();
+                resolve();
+              });
             });
           }
         }
+      }
+
+      // Record metrics globally for inspection and automated verification
+      if (typeof window !== 'undefined') {
+        (window as any).__FERTOBOT_TTS_METRICS__ = {
+          lastTurnGaps: measuredTransitionGaps,
+          lastTurnAverageGap: measuredTransitionGaps.length
+            ? Math.round(
+                measuredTransitionGaps.reduce((a, b) => a + b, 0) / measuredTransitionGaps.length
+              )
+            : 0,
+          chunksCount: chunks.length,
+          timestamp: Date.now(),
+        };
       }
 
       if (!abortSignal.aborted) {
@@ -446,10 +489,12 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         setCurrentSpeakingSentenceIndex(null);
         setCurrentSpeakingMsgId(null);
         isProcessingTurnRef.current = false;
+        cleanupPreloaded();
         if (sm.getState() === 'speaking' || sm.getState() === 'processing') {
           sm.transition('SPEAK_END');
         }
       } else {
+        cleanupPreloaded();
         setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sentences.length }));
         isProcessingTurnRef.current = false;
       }
@@ -484,9 +529,11 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
       setTranscript((prev) => [...prev, userMsg]);
       setPlaybackState('THINKING');
 
-      // 2. Query Backend Endpoint with Seamless Offline Local Fallback
+      // 2. Query Backend Endpoint with Seamless Offline Local Fallback & 30s Bounded Timeout
       let engineResult: EngineResponse | null = null;
       try {
+        const chatAbortCtrl = new AbortController();
+        const chatTimeout = setTimeout(() => chatAbortCtrl.abort(), 30000);
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -496,7 +543,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             session_id: sessionIdRef.current,
             zone_id: activeZoneId,
           }),
+          signal: chatAbortCtrl.signal,
         });
+        clearTimeout(chatTimeout);
         if (response.ok) {
           const data = await response.json();
           engineResult = {
@@ -516,7 +565,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             metadata: data.metadata,
           };
         }
-      } catch {}
+      } catch (err: any) {
+        console.warn('Backend /api/chat error or timeout:', err?.message || err);
+      }
 
       if (!engineResult) {
         engineResult = engine.processInput(trimmed);
@@ -756,8 +807,22 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
   );
 
   const repeatLastResponse = useCallback(() => {
-    submitText('repeat');
-  }, [submitText]);
+    const lastAgentMsg = transcript.slice().reverse().find((m) => m.role === 'agent');
+    if (!lastAgentMsg || !lastAgentMsg.text) return;
+
+    // Abort any ongoing playback queue and replay locally without sending a duplicate backend query
+    playbackAbortRef.current?.abort();
+    voiceControllerRef.current.stopSpeaking();
+    const abortController = new AbortController();
+    playbackAbortRef.current = abortController;
+
+    const sentenceList =
+      lastAgentMsg.sentences && lastAgentMsg.sentences.length > 0
+        ? lastAgentMsg.sentences
+        : [lastAgentMsg.text];
+
+    playSentenceQueue(sentenceList, lastAgentMsg.id, abortController.signal);
+  }, [playSentenceQueue, transcript]);
 
   const clearTranscript = useCallback(() => {
     playbackAbortRef.current?.abort();

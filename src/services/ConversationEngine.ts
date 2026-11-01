@@ -114,8 +114,8 @@ export class ConversationEngine {
       {
         intent: 'farm_status',
         patterns: [
-          /\b(farm\s+status|soil\s*(moisture|health)|crop\s+status|temperature|check\s+sensor)\b/i,
-          /(खेत\s*की\s*स्थिति|मिट्टी|फसल\s*की\s*स्थिति)/,
+          /\b(farm\s+status|field\s+status|farm\s+overview|farm\s+info|soil\s*(moisture|health)|crop\s+status|temperature|check\s+sensor)\b/i,
+          /(खेत\s*की\s*(स्थिति|जानकारी|हालत|रिपोर्ट)|खेत\s*का\s*(हाल|हालचाल)|मिट्टी|फसल\s*की\s*स्थिति)/,
         ],
         generateResponse: (_, input) => {
           const isHindi = /[\u0900-\u097F]/.test(input);

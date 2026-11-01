@@ -168,11 +168,11 @@ class DeterministicProvider(BaseConversationProvider):
         # 6. Optional Domain Preview (Farm Status)
         if (
             re.search(
-                r"\b(farm\s+status|soil\s*(moisture|health)|crop\s+status|temperature|check\s+sensor)\b",
+                r"\b(farm\s+status|field\s+status|farm\s+overview|farm\s+info|soil\s*(moisture|health)|crop\s+status|temperature|check\s+sensor)\b",
                 trimmed,
                 re.IGNORECASE,
             )
-            or re.search(r"(खेत\s*की\s*स्थिति|मिट्टी|फसल\s*की\s*स्थिति)", trimmed)
+            or re.search(r"(खेत\s*की\s*(स्थिति|जानकारी|हालत|रिपोर्ट)|खेत\s*का\s*(हाल|हालचाल)|मिट्टी|फसल\s*की\s*स्थिति)", trimmed)
         ):
             if is_hindi:
                 reply = (

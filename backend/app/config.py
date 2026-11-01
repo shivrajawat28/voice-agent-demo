@@ -76,6 +76,10 @@ LLM_MODEL: str = os.getenv(
 ).strip()
 LLM_REQUEST_TIMEOUT_SECONDS: float = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "12.0"))
 
+# Hardware & Actuation Safety Settings (Render Free Staging Demo)
+SIMULATION_MODE: bool = os.getenv("SIMULATION_MODE", "true").lower() in ("true", "1", "yes")
+ACTUATION_PERMITTED: bool = os.getenv("ACTUATION_PERMITTED", "false").lower() in ("true", "1", "yes")
+
 # Provider Configurations
 CONVERSATION_PROVIDER: str = os.getenv("CONVERSATION_PROVIDER", "orchestrator").lower()
 # Default to browser native TTS when no Gnani API key is configured, avoiding tone-as-speech confusion
