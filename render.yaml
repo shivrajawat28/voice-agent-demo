@@ -10,7 +10,7 @@ services:
     region: oregon
     plan: free
     healthCheckPath: /health
-    autoDeploy: false
+    autoDeploy: true
     envVars:
       - key: HOST
         value: "0.0.0.0"
