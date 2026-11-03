@@ -1093,24 +1093,20 @@ class LLMOrchestrator(BaseConversationProvider):
             k_val = npk.get("potassium_mg_kg")
 
             if is_hindi:
-                n_str = f"{n_val} mg/kg" if n_val is not None else "अनुपलब्ध (सेंसर अनकैलिब्रेटेड)"
                 reply = (
-                    f"FertoBot का 7-in-1 सॉइल प्रोब मिट्टी में पोषक तत्वों की सांद्रता (N, P, K mg/kg में) मापता है, "
-                    f"उर्वरक की खपत की मात्रा (किलोग्राम या लीटर में) नहीं। "
-                    f"उर्वरक की सटीक खपत (वॉल्यूम) मापने के लिए फ़र्टिगेशन यूनिट में इन-लाइन फ्लो मीटर या ऑटोमेटेड डोजिंग पंप कंट्रोलर की आवश्यकता होती है। "
-                    f"{zone_name} ({crop_name}) में {ts_ist} पर वर्तमान पोषक तत्व स्तर हैं: "
-                    f"नाइट्रोजन: {n_str}, फॉस्फोरस: {p_val} mg/kg, पोटेशियम: {k_val} mg/kg। "
-                    f"मिट्टी के पोषक तत्वों के स्तर स्थिर बने हुए हैं। (सिमुलेटेड टेलीमेट्री डेटा)"
+                    f"FertoBot अभी खाद की वास्तविक खपत नहीं माप सकता। "
+                    f"यह 7-in-1 सॉइल प्रोब की मदद से मिट्टी में पोषक तत्वों (N, P, K) की सांद्रता (concentration in mg/kg) बताता है, "
+                    f"न कि पिछले 24 घंटों में कितनी खाद डाली गई। "
+                    f"उर्वरक की सटीक खपत (वॉल्यूम) मापने के लिए फर्टिगेशन लाइन में इन-लाइन फ्लो मीटर या ऑटोमेटेड डोजिंग कंट्रोलर की आवश्यकता होती है। "
+                    f"{ts_ist} पर स्थिति: यदि आप किसी विशिष्ट ज़ोन के वर्तमान पोषक तत्व (NPK) जानना चाहते हैं, तो कृपया ज़ोन का नाम बताएं। (सिमुलेटेड टेलीमेट्री डेटा)"
                 )
             else:
-                n_str = f"{n_val} mg/kg" if n_val is not None else "Unavailable (Uncalibrated sensor)"
                 reply = (
-                    f"The FertoBot 7-in-1 soil probe monitors in-situ soil nutrient concentrations (N, P, K in mg/kg), "
-                    f"not volumetric fertilizer consumption (kg or litres applied). "
-                    f"Tracking volumetric consumption requires in-line flow meters or automated dosing pump controllers integrated into the fertigation unit. "
-                    f"In {zone_name} ({crop_name}) as of {ts_ist}, current nutrient levels are: "
-                    f"Nitrogen: {n_str}, Phosphorus: {p_val} mg/kg, Potassium: {k_val} mg/kg. "
-                    f"Stable soil nutrient levels indicate no severe depletion in the last 24 hours. (Simulated Telemetry)"
+                    f"FertoBot cannot measure actual volumetric fertilizer consumption. "
+                    f"The 7-in-1 soil probe monitors in-situ soil nutrient concentrations (N, P, K in mg/kg), "
+                    f"not volumetric fertilizer consumption (kg or litres applied) in the last 24 hours. "
+                    f"Tracking volumetric consumption requires in-line flow meters or automated dosing pump controllers on your fertigation unit. "
+                    f"As of {ts_ist}: If you would like to know the current soil nutrient (NPK) readings for any zone, please specify the zone name. (Simulated Telemetry)"
                 )
 
             self._last_responses[session_key] = reply
@@ -1548,63 +1544,122 @@ class LLMOrchestrator(BaseConversationProvider):
         # Farm Overall Condition Query (All 4 Zones Dynamic Telemetry)
         # -------------------------------------------------------------
         if not is_conceptual_or_exploratory and (
-            re.search(r"\b(overall\s*condition|overall\s*farm|farm\s*overview|entire\s*farm|overall\s*status)\b", trimmed, re.IGNORECASE)
-            or re.search(r"(पूरे\s*खेत\s*की\s*स्थिति|overall\s*condition|खेत\s*का\s*हाल)", trimmed, re.IGNORECASE)
+            re.search(r"\b(overall\s*condition|overall\s*farm|farm\s*overview|entire\s*farm|overall\s*status|all\s*zones?\s*(readings?|data)?)\b", trimmed, re.IGNORECASE)
+            or re.search(r"(पूरे\s*खेत\s*की\s*स्थिति|overall\s*condition|खेत\s*का\s*हाल|सभी\s*(ज़ोन|जोनों|zones?)?\s*की\s*(readings?|रीडिंग|आंकड़े))", trimmed, re.IGNORECASE)
             or (not zone_explicitly_mentioned and re.search(r"(खेत\s*की\s*(स्थिति|जानकारी|हालत|रिपोर्ट)|khet\s*ki\s*jankari|farm\s*status)", trimmed, re.IGNORECASE))
         ):
             overview = telemetry_service.get_farm_overview()
             tank_pct = int(telemetry_service.get_water_tank_level().get("water_tank_level_pct", 82.0))
             farm_name = overview.get("farm_name", "Green Valley Agro Farm")
 
-            zone_parts_hi = []
-            zone_parts_en = []
+            # Two-level response policy:
+            # Level 2 (Detailed readings with raw values) ONLY when user explicitly asks to SHOW or LIST readings/data.
+            # Level 1 (Default farmer-friendly answer): High-level evaluation, critical issues requiring attention, and simple next action.
+            is_explicit_detailed = bool(
+                re.search(r"\b(show|give|list|tell|view|display)\s+(all\s+)?(readings|data|numbers|values)\b", lower_trimmed)
+                or re.search(r"\b(detailed\s+readings?|exact\s+values?|raw\s+data)\b", lower_trimmed)
+                or re.search(r"(readings?|रीडिंग्स?|रीडिंग|आंकड़े|मान|डेटा)\s*(दिखाओ|दिखाएं|बताओ|बताएं|चाहिए|दें)", lower_trimmed)
+                or re.search(r"(सारे\s*(आंकड़े|मान|नंबर)|पूरी\s*रीडिंग्स?|all\s*readings?)", lower_trimmed)
+            ) and not bool(re.search(r"(के\s*(मुताबिक|अनुसार|हिसाब\s*से)|सही\s*है\s*या\s*गलत|कैसी\s*है|हाल\s*क्या|कैसा\s*है)", lower_trimmed))
 
-            for idx, z in enumerate(overview.get("zones", []), 1):
-                zname = z.get("zone_name", f"Zone {idx}")
-                crop = z.get("crop", "crop")
-                crop_hi = {"wheat": "गेहूं", "cotton": "कपास", "tomato": "टमाटर", "mustard": "सरसों"}.get(crop.lower(), crop)
-                m = z.get("soil_moisture_pct")
-                bat = z.get("battery_level_pct")
-                missing = z.get("missing_fields", [])
+            if not is_explicit_detailed:
+                dry_crops = []
+                wet_crops = []
+                normal_crops = []
+                for z in overview.get("zones", []):
+                    crop = z.get("crop", "crop")
+                    crop_hi = {"wheat": "गेहूं", "cotton": "कपास", "tomato": "टमाटर", "mustard": "सरसों"}.get(crop.lower(), crop)
+                    crop_en = crop.title()
+                    m = z.get("soil_moisture_pct")
+                    if m is not None:
+                        if m < 35.0:
+                            dry_crops.append((crop_hi, crop_en))
+                        elif m > 60.0:
+                            wet_crops.append((crop_hi, crop_en))
+                        else:
+                            normal_crops.append((crop_hi, crop_en))
 
-                if m is None:
-                    m_eval_hi = "नमी: अनुपलब्ध"
-                    m_eval_en = "Soil Moisture: unavailable"
-                elif m < 35.0:
-                    m_eval_hi = f"नमी {m}% (कम / सिंचाई आवश्यक)"
-                    m_eval_en = f"Soil Moisture {m}% (dry / irrigation needed)"
-                elif m > 60.0:
-                    m_eval_hi = f"नमी {m}% (अधिक / जलभराव जोखिम)"
-                    m_eval_en = f"Soil Moisture {m}% (high / saturation risk)"
+                if dry_crops or wet_crops:
+                    issues_hi = []
+                    issues_en = []
+                    if dry_crops:
+                        names_hi = " और ".join(c[0] for c in dry_crops)
+                        names_en = " and ".join(c[1] for c in dry_crops)
+                        issues_hi.append(f"{names_hi} वाले खेत में नमी कम है, इसलिए वहां सिंचाई की जरूरत हो सकती है")
+                        issues_en.append(f"{names_en} zone has low Soil Moisture, so irrigation may be needed there")
+                    if wet_crops:
+                        names_hi = " और ".join(c[0] for c in wet_crops)
+                        names_en = " and ".join(c[1] for c in wet_crops)
+                        issues_hi.append(f"{names_hi} वाले हिस्से में नमी ज्यादा है, इसलिए फिलहाल पानी देने से बचें")
+                        issues_en.append(f"{names_en} zone has high Soil Moisture, so hold off on watering for now")
+
+                    joined_issues_hi = "। ".join(issues_hi)
+                    joined_issues_en = ". ".join(issues_en)
+                    normal_names_hi = " और ".join(c[0] for c in normal_crops) if normal_crops else "बाकी"
+                    normal_names_en = " and ".join(c[1] for c in normal_crops) if normal_crops else "remaining"
+                    reply = (
+                        f"आपके खेत की स्थिति कुल मिलाकर ठीक है, लेकिन ध्यान देने की जरूरत है। "
+                        f"{joined_issues_hi}। बाकी {normal_names_hi} ज़ोन सामान्य स्थिति में हैं। (सिमुलेटेड टेलीमेट्री)"
+                        if is_hindi
+                        else f"Overall, your farm condition is good, but attention is needed. "
+                        f"{joined_issues_en}. The {normal_names_en} zones are in normal condition with optimal Soil Moisture. (Simulated Telemetry)"
+                    )
                 else:
-                    m_eval_hi = f"नमी {m}% (अनुकूल)"
-                    m_eval_en = f"Soil Moisture {m}% (optimal)"
+                    reply = (
+                        "आपके खेत की स्थिति बहुत अच्छी है और सभी ज़ोन में नमी अनुकूल स्तर पर है। (सिमुलेटेड टेलीमेट्री)"
+                        if is_hindi
+                        else "Your farm condition is excellent, and all zones have optimal soil moisture. (Simulated Telemetry)"
+                    )
+            else:
+                zone_parts_hi = []
+                zone_parts_en = []
 
-                flags_hi = []
-                flags_en = []
-                if missing:
-                    flags_hi.append(f"{', '.join(missing)} सेंसर अनकैलिब्रेटेड")
-                    flags_en.append(f"{', '.join(missing)} uncalibrated")
-                if bat is not None and bat < 20.0:
-                    flags_hi.append(f"डिवाइस बैटरी {bat}% (कम)")
-                    flags_en.append(f"low battery {bat}%")
+                for idx, z in enumerate(overview.get("zones", []), 1):
+                    zname = z.get("zone_name", f"Zone {idx}")
+                    crop = z.get("crop", "crop")
+                    crop_hi = {"wheat": "गेहूं", "cotton": "कपास", "tomato": "टमाटर", "mustard": "सरसों"}.get(crop.lower(), crop)
+                    m = z.get("soil_moisture_pct")
+                    bat = z.get("battery_level_pct")
+                    missing = z.get("missing_fields", [])
 
-                f_hi = f" [{', '.join(flags_hi)}]" if flags_hi else ""
-                f_en = f" [{', '.join(flags_en)}]" if flags_en else ""
+                    if m is None:
+                        m_eval_hi = "नमी: अनुपलब्ध"
+                        m_eval_en = "Soil Moisture: unavailable"
+                    elif m < 35.0:
+                        m_eval_hi = f"नमी {m}% (कम / सिंचाई आवश्यक)"
+                        m_eval_en = f"Soil Moisture {m}% (dry / irrigation needed)"
+                    elif m > 60.0:
+                        m_eval_hi = f"नमी {m}% (अधिक / जलभराव जोखिम)"
+                        m_eval_en = f"Soil Moisture {m}% (high / saturation risk)"
+                    else:
+                        m_eval_hi = f"नमी {m}% (अनुकूल)"
+                        m_eval_en = f"Soil Moisture {m}% (optimal)"
 
-                zone_parts_hi.append(f"{idx}. {crop_hi} ज़ोन ({zname}): {m_eval_hi}{f_hi}")
-                zone_parts_en.append(f"{idx}. {crop.title()} Zone ({zname}): {m_eval_en}{f_en}")
+                    flags_hi = []
+                    flags_en = []
+                    if missing:
+                        flags_hi.append(f"{', '.join(missing)} सेंसर अनकैलिब्रेटेड")
+                        flags_en.append(f"{', '.join(missing)} uncalibrated")
+                    if bat is not None and bat < 20.0:
+                        flags_hi.append(f"डिवाइस बैटरी {bat}% (कम)")
+                        flags_en.append(f"low battery {bat}%")
 
-            joined_hi = "। ".join(zone_parts_hi)
-            joined_en = ". ".join(zone_parts_en)
+                    f_hi = f" [{', '.join(flags_hi)}]" if flags_hi else ""
+                    f_en = f" [{', '.join(flags_en)}]" if flags_en else ""
 
-            reply = (
-                f"आपके पूरे खेत ({farm_name}) का वास्तविक समग्र अवलोकन: {joined_hi}। "
-                f"मुख्य पानी का टैंक {tank_pct}% भरा हुआ है। (सिमुलेटेड टेलीमेट्री)"
-                if is_hindi
-                else f"Real-time overview for {farm_name}: {joined_en}. "
-                f"Main water reservoir is at {tank_pct}%. (Simulated Telemetry)"
-            )
+                    zone_parts_hi.append(f"{idx}. {crop_hi} ज़ोन ({zname}): {m_eval_hi}{f_hi}")
+                    zone_parts_en.append(f"{idx}. {crop.title()} Zone ({zname}): {m_eval_en}{f_en}")
+
+                joined_hi = "। ".join(zone_parts_hi)
+                joined_en = ". ".join(zone_parts_en)
+
+                reply = (
+                    f"आपके पूरे खेत ({farm_name}) का वास्तविक समग्र अवलोकन: {joined_hi}। "
+                    f"मुख्य पानी का टैंक {tank_pct}% भरा हुआ है। (सिमुलेटेड टेलीमेट्री)"
+                    if is_hindi
+                    else f"Real-time overview for {farm_name}: {joined_en}. "
+                    f"Main water reservoir is at {tank_pct}%. (Simulated Telemetry)"
+                )
             self._last_responses[session_key] = reply
             trace.append(ExecutionTraceStep(
                 step_id=f"step-{uuid.uuid4().hex[:6]}",

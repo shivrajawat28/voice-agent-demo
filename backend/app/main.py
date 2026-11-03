@@ -173,6 +173,12 @@ async def text_to_speech_endpoint(
         )
     except GnaniAPIError as gae:
         sanitized = redact_sensitive(str(gae))
+        if "rate limit" in sanitized.lower() or "429" in sanitized:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=sanitized,
+                headers={"X-TTS-Provider": "gnani", "Retry-After": "2"},
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=sanitized,
@@ -226,6 +232,12 @@ async def websocket_stt_proxy(websocket: WebSocket):
     Proxies browser microphone PCM audio to Gnani Prisma v3.0 over WebSocket.
     """
     await gnani_stt_stream_handler.handle_client_websocket(websocket)
+
+
+@app.get("/api/tts/metrics", tags=["Voice"])
+async def get_tts_metrics_endpoint():
+    """Returns real-time TTS rate limiting, concurrency, and queue latency metrics."""
+    return voice_service.get_tts_metrics()
 
 
 @app.post("/api/provider/tts", tags=["Configuration"])

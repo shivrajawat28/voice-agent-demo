@@ -65,3 +65,24 @@ class MockTTSProvider(BaseTextToSpeechProvider):
         freq = 360.0 if language.lower().startswith("hi") else 440.0
         audio_bytes = generate_synthetic_wav(duration_seconds=duration, frequency_hz=freq)
         return audio_bytes, "audio/wav"
+
+    def get_metrics(self) -> dict:
+        return {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "rate_limit_429_count": 0,
+            "server_error_5xx_count": 0,
+            "retry_count": 0,
+            "exhausted_retries_count": 0,
+            "active_concurrency": 0,
+            "peak_concurrency": 0,
+            "total_queue_wait_ms": 0.0,
+            "total_provider_duration_ms": 0.0,
+            "cancelled_requests": 0,
+            "concurrency_limit": 2,
+            "max_retries": 3,
+            "provider": "mock",
+        }
+
+    def reset_metrics(self) -> None:
+        pass

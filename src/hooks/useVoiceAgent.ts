@@ -323,56 +323,79 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         preloadedObjects.length = 0;
       };
 
+      const authoritativeLang = turnLanguage || (/[\u0900-\u097F]/.test(sentences.join(' ')) ? 'hi-IN' : language);
+      const authoritativeVoice = turnVoice || (authoritativeLang.startsWith('hi') ? 'Nalini' : selectedVoice);
+      const isIndicTurn = authoritativeLang.startsWith('hi') || authoritativeLang.includes('hinglish') || authoritativeLang.includes('hi-en');
+
       const fetchChunkTTS = async (
         chunkIdx: number
       ): Promise<{ audio: HTMLAudioElement; url: string } | null> => {
         if (chunkIdx >= chunks.length || abortSignal.aborted) return null;
         const chunkText = chunks[chunkIdx].text;
-        const tReqStart = performance.now();
+        const maxChunkRetries = 2;
 
-        const effectiveLang = turnLanguage || (/[\u0900-\u097F]/.test(chunkText) ? 'hi-IN' : language);
-        const effectiveVoice = turnVoice || (effectiveLang.startsWith('hi') ? 'Nalini' : selectedVoice);
-
-        try {
-          const timeoutCtrl = new AbortController();
-          const timer = setTimeout(() => timeoutCtrl.abort(), 10000);
-          const onParentAbort = () => timeoutCtrl.abort();
+        for (let attempt = 0; attempt <= maxChunkRetries; attempt++) {
           if (abortSignal.aborted) return null;
-          abortSignal.addEventListener('abort', onParentAbort);
+          const tReqStart = performance.now();
 
-          const res = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: chunkText,
-              language: effectiveLang,
-              voice_id: effectiveVoice,
-              speed: ttsSpeed,
-            }),
-            signal: timeoutCtrl.signal,
-          });
-          clearTimeout(timer);
-          abortSignal.removeEventListener('abort', onParentAbort);
+          try {
+            const timeoutCtrl = new AbortController();
+            const timer = setTimeout(() => timeoutCtrl.abort(), 10000);
+            const onParentAbort = () => timeoutCtrl.abort();
+            abortSignal.addEventListener('abort', onParentAbort);
 
-          const tReqEnd = performance.now();
-          const ct = res.headers.get('content-type') || '';
-          if (res.ok && ct.startsWith('audio/')) {
-            const blob = await res.blob();
-            if (blob.size > 44 && !abortSignal.aborted) {
-              const preloaded = vc.createPreloadedAudio(blob);
-              preloadedObjects.push(preloaded);
-              console.log(
-                `[TTS:Prefetch] Chunk ${chunkIdx + 1}/${chunks.length} ready in ${Math.round(
-                  tReqEnd - tReqStart
-                )}ms (${blob.size} bytes)`
-              );
-              return preloaded;
+            const res = await fetch('/api/tts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: chunkText,
+                language: authoritativeLang,
+                voice_id: authoritativeVoice,
+                speed: ttsSpeed,
+              }),
+              signal: timeoutCtrl.signal,
+            });
+            clearTimeout(timer);
+            abortSignal.removeEventListener('abort', onParentAbort);
+
+            const tReqEnd = performance.now();
+            const ct = res.headers.get('content-type') || '';
+            if (res.ok && ct.startsWith('audio/')) {
+              const blob = await res.blob();
+              if (blob.size > 44 && !abortSignal.aborted) {
+                const preloaded = vc.createPreloadedAudio(blob);
+                preloadedObjects.push(preloaded);
+                console.log(
+                  `[TTS:Prefetch] Chunk ${chunkIdx + 1}/${chunks.length} ready in ${Math.round(
+                    tReqEnd - tReqStart
+                  )}ms (${blob.size} bytes)`
+                );
+                return preloaded;
+              }
+            }
+
+            // Handle 429 rate limit or 502/503 with bounded retry
+            if (res.status === 429 || res.status === 502 || res.status === 503) {
+              if (attempt < maxChunkRetries && !abortSignal.aborted) {
+                const retryAfterHeader = res.headers.get('Retry-After');
+                const waitMs = retryAfterHeader
+                  ? Math.min(5000, Math.max(500, parseFloat(retryAfterHeader) * 1000))
+                  : Math.min(3000, 750 * Math.pow(2, attempt));
+                console.warn(
+                  `[TTS] Chunk ${chunkIdx + 1} HTTP ${res.status} received. Backing off ${waitMs}ms before retry...`
+                );
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+                continue;
+              }
+            }
+          } catch (e: any) {
+            if (e.name !== 'AbortError' && attempt < maxChunkRetries && !abortSignal.aborted) {
+              console.warn(`[TTS:Prefetch] Chunk ${chunkIdx + 1} network error, retrying...`, e);
+              await new Promise((resolve) => setTimeout(resolve, 800));
+              continue;
             }
           }
-        } catch (e: any) {
-          if (e.name !== 'AbortError') {
-            console.warn(`[TTS:Prefetch] Chunk ${chunkIdx + 1} fetch error:`, e);
-          }
+          break;
         }
         return null;
       };
@@ -387,14 +410,13 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         return prefetchMap.get(chunkIdx)!;
       };
 
-      // Immediately initiate prefetch for Chunk 0 AND Chunk 1 in parallel
+      // Throttled lookahead: prefetch ONLY chunk 0 initially to eliminate burst 429 rate limits
       getOrPrefetch(0);
-      if (chunks.length > 1) {
-        getOrPrefetch(1);
-      }
 
       let previousAudioEndTime: number | null = null;
       const measuredTransitionGaps: number[] = [];
+      let successfulAudioChunks = 0;
+      let failedAudioChunks = 0;
 
       for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
         if (abortSignal.aborted) break;
@@ -402,14 +424,14 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         const isLastChunk = cIdx === chunks.length - 1;
         const currentChunk = chunks[cIdx];
 
-        // Trigger lookahead prefetch for next 2 chunks while current chunk is prepared/played
-        if (cIdx + 1 < chunks.length) getOrPrefetch(cIdx + 1);
-        if (cIdx + 2 < chunks.length) getOrPrefetch(cIdx + 2);
+        // Trigger single lookahead prefetch for next chunk only
+        if (cIdx + 1 < chunks.length) {
+          getOrPrefetch(cIdx + 1);
+        }
 
         // Await audio for current chunk
         let preloaded: { audio: HTMLAudioElement; url: string } | null = null;
         if (ttsProvider === 'gnani' && gnaniConfigured) {
-          // If chunk 0 is still downloading, show generating status; otherwise maintain continuous speaking
           if (cIdx === 0 && !prefetchMap.get(0)) {
             setGyaniAudioStatus('GNANI AUDIO GENERATING');
             setPlaybackState('GENERATING AUDIO');
@@ -439,6 +461,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
 
         // Case A & B: Preloaded Neural / Mock Audio with gapless queue handoff
         if (preloaded) {
+          successfulAudioChunks++;
           setGyaniAudioStatus(ttsProvider === 'gnani' ? 'GNANI AUDIO PLAYING' : 'IDLE');
 
           await new Promise<void>((resolve) => {
@@ -464,9 +487,21 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             }
           });
         }
-        // Case C: Browser Native SpeechSynthesis
+        // Case C: Fallback handling
         else {
-          if (capabilities.speechSynthesisSupported && !abortSignal.aborted) {
+          failedAudioChunks++;
+          // NEVER silently fall back to browser Web Speech synthesis for Indic speech turns!
+          // Browser native speech synthesis on Chrome/Safari defaults to English voices (e.g. Samantha/Alex),
+          // which pronounces Hindi text with an unnatural English accent.
+          if (isIndicTurn && ttsProvider === 'gnani') {
+            console.warn(
+              `[TTS:VoiceSafety] Chunk ${cIdx + 1} audio unavailable from Gnani. ` +
+              `Retaining Devanagari text on screen and suppressing browser English speech synthesis to preserve Hindi voice purity.`
+            );
+            // Brief visual pause simulating reading time so text displays naturally without audio clash
+            await new Promise<void>((resolve) => setTimeout(resolve, 400));
+            previousAudioEndTime = performance.now();
+          } else if (capabilities.speechSynthesisSupported && !abortSignal.aborted && ttsProvider === 'browser') {
             await new Promise<void>((resolve) => {
               vc.speak(currentChunk.text, () => {
                 previousAudioEndTime = performance.now();
@@ -487,6 +522,10 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
               )
             : 0,
           chunksCount: chunks.length,
+          successfulChunks: successfulAudioChunks,
+          failedChunks: failedAudioChunks,
+          turnLanguage: authoritativeLang,
+          turnVoice: authoritativeVoice,
           timestamp: Date.now(),
         };
       }

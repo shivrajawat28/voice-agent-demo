@@ -3,7 +3,7 @@ Voice Service
 Central coordinator for Text-to-Speech and Speech-to-Text provider instances,
 supporting runtime switching, mock fallback, and client configuration reporting.
 """
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Any
 import logging
 from app import config
 from app.providers.base import BaseTextToSpeechProvider, BaseSpeechToTextProvider
@@ -99,6 +99,24 @@ class VoiceService:
             language=language,
             audio_format=audio_format,
         )
+
+    def get_tts_metrics(self) -> Dict[str, Any]:
+        """Returns snapshot of active TTS metrics."""
+        gnani_prov = self._tts_providers.get("gnani")
+        if gnani_prov and hasattr(gnani_prov, "get_metrics"):
+            metrics = gnani_prov.get_metrics()
+            metrics["active_tts_provider"] = self._active_tts_name
+            return metrics
+        provider = self.get_tts_provider()
+        if hasattr(provider, "get_metrics"):
+            return provider.get_metrics()
+        return {"provider": self._active_tts_name, "status": "no_metrics"}
+
+    def reset_tts_metrics(self) -> None:
+        """Resets TTS metrics counters."""
+        provider = self.get_tts_provider()
+        if hasattr(provider, "reset_metrics"):
+            provider.reset_metrics()
 
     def get_config(self) -> ConfigResponse:
         """
