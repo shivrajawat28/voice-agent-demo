@@ -53,17 +53,17 @@ def test_canonical_7in1_profile_units_and_ranges():
 
     # Parameter 1: Nitrogen
     assert params["nitrogen"].unit == "mg/kg"
-    assert params["nitrogen"].value == 38.0
+    assert params["nitrogen"].value == 142.5
     assert params["nitrogen"].quality_status == "VALID"
 
     # Parameter 2: Phosphorus
     assert params["phosphorus"].unit == "mg/kg"
-    assert params["phosphorus"].value == 22.0
+    assert params["phosphorus"].value == 28.4
     assert params["phosphorus"].quality_status == "VALID"
 
     # Parameter 3: Potassium
     assert params["potassium"].unit == "mg/kg"
-    assert params["potassium"].value == 185.0
+    assert params["potassium"].value == 185.2
     assert params["potassium"].quality_status == "VALID"
 
     # Parameter 4: Soil Moisture

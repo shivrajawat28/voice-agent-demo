@@ -61,9 +61,9 @@ class TelemetryService:
                 "last_seen_iso": now.isoformat(),
                 # Agronomic readings
                 "soil_moisture_pct": 48.2,  # Optimal for tillering (45-55%)
-                "nitrogen_mg_kg": 38.0,      # Low-medium; wheat tillering prefers 50-80 mg/kg
-                "phosphorus_mg_kg": 22.0,    # Adequate (20-30 mg/kg)
-                "potassium_mg_kg": 185.0,    # Optimal (>150 mg/kg)
+                "nitrogen_mg_kg": 142.5,     # Calibrated active baseline
+                "phosphorus_mg_kg": 28.4,    # Adequate (20-30 mg/kg)
+                "potassium_mg_kg": 185.2,    # Optimal (>150 mg/kg)
                 "soil_temperature_c": 24.5,  # Optimal root zone temperature
                 "ph": 6.8,                   # Near neutral, optimal
                 "electrical_conductivity_ds_m": 1.2, # Low salinity (<2.0 dS/m)
@@ -72,9 +72,7 @@ class TelemetryService:
                 "actuation_permitted": False,
                 "reading_timestamp_iso": now.isoformat(),
                 "missing_fields": [],
-                "warnings": [
-                    "Nitrogen reading (38 mg/kg) is slightly low for peak tillering vegetative demand."
-                ],
+                "warnings": [],
             },
             "DEMO-ZONE-002": {
                 "farm_id": self._farm_id,
@@ -93,9 +91,9 @@ class TelemetryService:
                 "last_seen_iso": now.isoformat(),
                 # Agronomic readings
                 "soil_moisture_pct": 28.5,  # Moisture deficit stress (critical <35%)
-                "nitrogen_mg_kg": 62.0,      # Good / Adequate
-                "phosphorus_mg_kg": 31.0,    # Optimal
-                "potassium_mg_kg": 210.0,    # High / Optimal
+                "nitrogen_mg_kg": 168.0,     # Calibrated active baseline
+                "phosphorus_mg_kg": 34.2,    # Optimal
+                "potassium_mg_kg": 210.5,    # High / Optimal
                 "soil_temperature_c": 26.8,  # Warm surface layer
                 "ph": 7.5,                   # Moderately alkaline, acceptable for cotton
                 "electrical_conductivity_ds_m": 1.8, # Normal
@@ -126,8 +124,8 @@ class TelemetryService:
                 # Agronomic readings
                 "soil_moisture_pct": 64.5,  # Excessively wet / saturation risk (>60%)
                 "nitrogen_mg_kg": None,      # MISSING reading (simulates uncalibrated/faulty optical sensor)
-                "phosphorus_mg_kg": 18.0,    # Borderline low
-                "potassium_mg_kg": 145.0,    # Moderate
+                "phosphorus_mg_kg": 41.0,    # Good
+                "potassium_mg_kg": 195.0,    # Optimal
                 "soil_temperature_c": 25.1,
                 "ph": 5.9,                   # Slightly acidic
                 "electrical_conductivity_ds_m": 2.4, # Elevated salinity (>2.0 dS/m threshold for protected crops)
@@ -237,40 +235,51 @@ class TelemetryService:
             "DEMO-ZONE-004": {"24h": [], "7d": []},
         }
 
-        # 7-day daily samples (Day -6 to Day 0)
-        # Zone 1
+        # 7-day daily samples (7 points spanning exactly 7.0 elapsed days)
+        # Zone 1 (Wheat)
         z1_7d_moisture = [49.5, 48.8, 51.0, 50.2, 49.0, 48.5, 48.2]
-        # Zone 2 (progressive drying trend)
+        # Zone 2 (Cotton - progressive drying trend)
         z2_7d_moisture = [38.2, 36.5, 34.8, 33.1, 31.4, 29.8, 28.5]
-        # Zone 3 (high/saturated)
+        # Zone 3 (Tomato - high/saturated)
         z3_7d_moisture = [61.0, 62.5, 63.8, 65.2, 64.0, 65.1, 64.5]
-        # Zone 4 (steady/adequate)
+        # Zone 4 (Mustard - steady/adequate)
         z4_7d_moisture = [40.1, 39.8, 39.2, 38.9, 38.5, 38.7, 38.5]
 
         for i in range(7):
-            t = ref_time - timedelta(days=(6 - i))
+            day_offset = 7.0 - (i * (7.0 / 6.0))
+            t = ref_time - timedelta(days=day_offset)
+            # Calibrated in-situ nitrogen depletion trajectories:
+            # Zone 1: 165.0 -> 142.5 mg/kg (-22.5 change over 7d = 3.2 mg/kg/day)
+            z1_n = round(165.0 - (i * (22.5 / 6.0)), 1)
+            # Zone 2: 195.0 -> 168.0 mg/kg (-27.0 change over 7d = 3.9 mg/kg/day)
+            z2_n = round(195.0 - (i * (27.0 / 6.0)), 1)
+            # Zone 3: Uncalibrated optical nitrogen probe (missing reading)
+            z3_n = None
+            # Zone 4: 152.0 -> 135.0 mg/kg (-17.0 change over 7d = 2.4 mg/kg/day)
+            z4_n = round(152.0 - (i * (17.0 / 6.0)), 1)
+
             history["DEMO-ZONE-001"]["7d"].append({
                 "timestamp_iso": t.isoformat(),
                 "soil_moisture_pct": z1_7d_moisture[i],
-                "nitrogen_mg_kg": 40.0 - (i * 0.3),
+                "nitrogen_mg_kg": z1_n,
                 "soil_temperature_c": 21.5 + (i * 0.15),
             })
             history["DEMO-ZONE-002"]["7d"].append({
                 "timestamp_iso": t.isoformat(),
                 "soil_moisture_pct": z2_7d_moisture[i],
-                "nitrogen_mg_kg": 64.0 - (i * 0.3),
+                "nitrogen_mg_kg": z2_n,
                 "soil_temperature_c": 25.0 + (i * 0.25),
             })
             history["DEMO-ZONE-003"]["7d"].append({
                 "timestamp_iso": t.isoformat(),
                 "soil_moisture_pct": z3_7d_moisture[i],
-                "nitrogen_mg_kg": None,
+                "nitrogen_mg_kg": z3_n,
                 "soil_temperature_c": 24.5 + (i * 0.1),
             })
             history["DEMO-ZONE-004"]["7d"].append({
                 "timestamp_iso": t.isoformat(),
                 "soil_moisture_pct": z4_7d_moisture[i],
-                "nitrogen_mg_kg": 46.0 - (i * 0.15),
+                "nitrogen_mg_kg": z4_n,
                 "soil_temperature_c": 22.0 + (i * 0.1),
             })
 
@@ -454,20 +463,44 @@ class TelemetryService:
         concentrations (mg/kg), but lacks in-line fertilizer flow meters or automated
         fertigation injection controllers.
         Returns explicit data availability status with zero fabrication and 12-hour IST timestamps.
+        Never defaults unknown zones to Zone 1.
+        Retrieves current NPK values from canonical telemetry service.
         """
         target_zone = zone_id or self._active_zone_id
-        z_meta = self.get_zone(target_zone) or {}
+        ts_ist = format_to_ist(datetime.now(timezone.utc))
+
+        # Check if zone is registered (strictly do not fallback to Zone 1)
+        if target_zone not in self._zones:
+            return {
+                "zone_id": target_zone,
+                "status": "unknown_zone",
+                "available": False,
+                "reason": f"Zone '{target_zone}' is not registered on this farm.",
+                "current_npk": None,
+                "timestamp": ts_ist,
+                "timestamp_ist": ts_ist,
+                "data_source": "simulated",
+                "is_simulated": True,
+            }
+
+        z_meta = self._zones[target_zone]
         zone_name = z_meta.get("zone_name", target_zone)
 
-        # Calibrated NPK values per Phase 30 Section 1:
-        npk_table = {
-            "DEMO-ZONE-001": {"nitrogen_mg_kg": 142.5, "phosphorus_mg_kg": 28.4, "potassium_mg_kg": 185.2, "nitrogen_status": "active"},
-            "DEMO-ZONE-002": {"nitrogen_mg_kg": 168.0, "phosphorus_mg_kg": 34.2, "potassium_mg_kg": 210.5, "nitrogen_status": "active"},
-            "DEMO-ZONE-003": {"nitrogen_mg_kg": None, "phosphorus_mg_kg": 41.0, "potassium_mg_kg": 195.0, "nitrogen_status": "uncalibrated"},
-            "DEMO-ZONE-004": {"nitrogen_mg_kg": 135.0, "phosphorus_mg_kg": 26.0, "potassium_mg_kg": 172.0, "nitrogen_status": "active"},
+        # Retrieve current NPK directly from canonical zone record
+        n_val = z_meta.get("nitrogen_mg_kg")
+        p_val = z_meta.get("phosphorus_mg_kg")
+        k_val = z_meta.get("potassium_mg_kg")
+        is_uncalibrated = (
+            target_zone == "DEMO-ZONE-003"
+            or n_val is None
+            or "nitrogen_mg_kg" in z_meta.get("missing_fields", [])
+        )
+        current_npk = {
+            "nitrogen_mg_kg": n_val,
+            "phosphorus_mg_kg": p_val,
+            "potassium_mg_kg": k_val,
+            "nitrogen_status": "uncalibrated" if is_uncalibrated else "active",
         }
-        current_npk = npk_table.get(target_zone, npk_table["DEMO-ZONE-001"])
-        ts_ist = format_to_ist(datetime.now(timezone.utc))
 
         return {
             "zone_id": target_zone,
@@ -499,17 +532,33 @@ class TelemetryService:
         time_window_days: int = 7,
     ) -> Dict[str, Any]:
         """
-        Calculates the nutrient depletion rate from historical sensor readings.
+        Calculates the nutrient depletion rate from validated historical sensor readings.
         Formula: Depletion rate = (Initial concentration - Final concentration) / Elapsed days
         Unit: mg/kg/day (positive value = depletion, negative value = accumulation)
         Distinguishes between measured concentration change, depletion rate, and biological crop uptake.
         Explicitly detects missing/uncalibrated sensors (e.g. Zone 3 uncalibrated nitrogen probe).
         """
         target_zone = zone_id or self._active_zone_id
-        z_meta = self.get_zone(target_zone) or {}
+        ts_ist = format_to_ist(datetime.now(timezone.utc))
+
+        # Check if zone is registered (strictly do not fallback to Zone 1)
+        if target_zone not in self._zones:
+            return {
+                "zone_id": target_zone,
+                "status": "unknown_zone",
+                "valid": False,
+                "available": False,
+                "reason": f"Zone '{target_zone}' is not registered on this farm.",
+                "nutrient": nutrient,
+                "timestamp": ts_ist,
+                "timestamp_ist": ts_ist,
+                "data_source": "simulated",
+                "is_simulated": True,
+            }
+
+        z_meta = self._zones[target_zone]
         zone_name = z_meta.get("zone_name", target_zone)
         crop = z_meta.get("crop", "crop")
-        ts_ist = format_to_ist(datetime.now(timezone.utc))
 
         # Map nutrient name to parameter key
         param_key = (
@@ -518,9 +567,9 @@ class TelemetryService:
             else ("phosphorus_mg_kg" if "phos" in nutrient.lower() else "potassium_mg_kg")
         )
 
-        # Check if sensor is uncalibrated/missing (Zone 3 nitrogen probe)
+        # Check if sensor is uncalibrated/missing in this zone (e.g. Zone 3 optical sensor)
         missing_fields = z_meta.get("missing_fields", [])
-        if target_zone == "DEMO-ZONE-003" or param_key in missing_fields or (target_zone == "DEMO-ZONE-003" and param_key == "nitrogen_mg_kg"):
+        if target_zone == "DEMO-ZONE-003" or param_key in missing_fields or z_meta.get(param_key) is None:
             return {
                 "zone_id": target_zone,
                 "zone_name": zone_name,
@@ -529,6 +578,7 @@ class TelemetryService:
                 "parameter": param_key,
                 "status": "uncalibrated",
                 "valid": False,
+                "available": False,
                 "reason": f"{param_key} optical sensor is UNCALIBRATED in {zone_name}. Quantitative depletion calculation cannot be performed reliably.",
                 "timestamp": ts_ist,
                 "timestamp_ist": ts_ist,
@@ -536,18 +586,58 @@ class TelemetryService:
                 "is_simulated": True,
             }
 
-        # Calibrated 7-day rate values per Phase 30 Section 4:
-        # Zone 1 (Wheat): Initial 165.0, Current 142.5, Change -22.5, Rate 3.2 mg/kg/day
-        # Zone 2 (Cotton): Initial 195.0, Current 168.0, Change -27.0, Rate 3.9 mg/kg/day
-        # Zone 4 (Mustard): Initial 152.0, Current 135.0, Change -17.0, Rate 2.4 mg/kg/day
-        if target_zone == "DEMO-ZONE-002":
-            c_initial, c_final, conc_change, depletion_rate = 195.0, 168.0, -27.0, 3.9
-        elif target_zone == "DEMO-ZONE-004":
-            c_initial, c_final, conc_change, depletion_rate = 152.0, 135.0, -17.0, 2.4
-        else:
-            c_initial, c_final, conc_change, depletion_rate = 165.0, 142.5, -22.5, 3.2
+        # Retrieve historical series
+        series_key = "7d" if time_window_days >= 3 else "24h"
+        raw_series = self._history.get(target_zone, {}).get(series_key, [])
 
-        elapsed_days = float(time_window_days)
+        # Validate calibration, quality, and timestamps
+        valid_records = []
+        for record in raw_series:
+            val = record.get(param_key)
+            if val is None or not isinstance(val, (int, float)):
+                continue
+            ts_str = record.get("timestamp_iso")
+            if not ts_str:
+                continue
+            try:
+                rec_dt = datetime.fromisoformat(ts_str)
+                valid_records.append((rec_dt, float(val)))
+            except (ValueError, TypeError):
+                continue
+
+        # Sort chronologically by timestamp
+        valid_records.sort(key=lambda x: x[0])
+
+        if len(valid_records) < 2:
+            return {
+                "zone_id": target_zone,
+                "zone_name": zone_name,
+                "crop": crop,
+                "nutrient": nutrient,
+                "parameter": param_key,
+                "status": "insufficient_data",
+                "valid": False,
+                "available": False,
+                "reason": f"Insufficient historical telemetry records for {zone_name} in the requested {time_window_days}-day window.",
+                "timestamp": ts_ist,
+                "timestamp_ist": ts_ist,
+                "data_source": "simulated",
+                "is_simulated": True,
+            }
+
+        first_dt, c_initial = valid_records[0]
+        last_dt, c_final = valid_records[-1]
+
+        elapsed_seconds = max((last_dt - first_dt).total_seconds(), 3600.0) # at least 1 hr
+        elapsed_days = round(elapsed_seconds / 86400.0, 1)
+        if elapsed_days < 0.1:
+            elapsed_days = 0.1
+
+        conc_change = round(c_final - c_initial, 2)
+        depletion_rate = round((c_initial - c_final) / elapsed_days, 1)
+
+        start_ist = format_to_ist(first_dt)
+        end_ist = format_to_ist(last_dt)
 
         return {
             "zone_id": target_zone,
@@ -557,6 +647,7 @@ class TelemetryService:
             "parameter": param_key,
             "status": "calculated",
             "valid": True,
+            "available": True,
             "initial_reading": c_initial,
             "final_reading": c_final,
             "initial_concentration_mg_kg": c_initial,
@@ -566,10 +657,16 @@ class TelemetryService:
             "elapsed_days": elapsed_days,
             "depletion_rate_mg_kg_day": depletion_rate,
             "unit": "mg/kg/day",
+            "data_coverage": {
+                "sample_count": len(valid_records),
+                "window_requested_days": time_window_days,
+                "first_timestamp_iso": first_dt.isoformat(),
+                "last_timestamp_iso": last_dt.isoformat(),
+            },
             "timestamp": ts_ist,
             "timestamp_ist": ts_ist,
-            "start_time_ist": ts_ist,
-            "end_time_ist": ts_ist,
+            "start_time_ist": start_ist,
+            "end_time_ist": end_ist,
             "agronomic_note": (
                 "Measured soil concentration reduction reflects composite soil dynamics, "
                 "including plant root absorption, microbial immobilization, or leaching losses, "

@@ -70,8 +70,21 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
-    """Health check endpoint to verify backend availability."""
-    return HealthResponse()
+    """Health check endpoint to verify backend availability and exact deployed commit SHA."""
+    commit_sha = os.getenv("RENDER_GIT_COMMIT", os.getenv("GIT_COMMIT", None))
+    if not commit_sha:
+        v_file = os.path.join(os.path.dirname(__file__), "version.json")
+        if os.path.exists(v_file):
+            try:
+                with open(v_file, "r") as f:
+                    v_data = json.load(f)
+                    commit_sha = v_data.get("commit")
+            except Exception:
+                pass
+    return HealthResponse(
+        commit=commit_sha,
+        environment=os.getenv("ENVIRONMENT", "production"),
+    )
 
 
 @app.get("/api/config", response_model=ConfigResponse, tags=["Configuration"])

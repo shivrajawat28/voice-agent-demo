@@ -37,12 +37,14 @@ COPY backend/app/ ./app/
 # Copy built frontend assets from Stage 1 into /dist
 COPY --from=frontend-builder /build/dist /dist
 
+ARG RENDER_GIT_COMMIT=""
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     HOST=0.0.0.0 \
     PORT=8000 \
     SIMULATION_MODE=true \
-    ACTUATION_PERMITTED=false
+    ACTUATION_PERMITTED=false \
+    RENDER_GIT_COMMIT=${RENDER_GIT_COMMIT}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1

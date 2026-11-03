@@ -9,6 +9,8 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "fertobot-voice-agent-backend"
     version: str = "0.2.0"
+    commit: Optional[str] = None
+    environment: str = "production"
 
 
 class ChatRequest(BaseModel):

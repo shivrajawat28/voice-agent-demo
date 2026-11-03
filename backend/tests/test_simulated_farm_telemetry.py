@@ -54,9 +54,10 @@ def test_three_distinct_zones_have_unique_readings():
     assert z4["crop"] == "mustard"
 
     # Verify different NPK values
-    assert z1["nitrogen_mg_kg"] == 38.0
-    assert z2["nitrogen_mg_kg"] == 62.0
+    assert z1["nitrogen_mg_kg"] == 142.5
+    assert z2["nitrogen_mg_kg"] == 168.0
     assert z3["nitrogen_mg_kg"] is None  # Missing sensor test requirement
+    assert z4["nitrogen_mg_kg"] == 135.0
 
     # Verify distinct batteries and devices
     assert z1["device_id"] == "DEMO-DEVICE-001"

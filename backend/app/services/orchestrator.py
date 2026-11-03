@@ -1063,6 +1063,26 @@ class LLMOrchestrator(BaseConversationProvider):
             or re.search(r"(उर्वरक|खाद)\s*की\s*खपत", trimmed, re.IGNORECASE)
         ):
             fert_data = telemetry_service.get_fertilizer_consumption(resolved_zone, "24h")
+            if fert_data.get("status") == "unknown_zone":
+                reply = (
+                    f"ज़ोन या सेक्टर '{resolved_zone}' इस खेत में पंजीकृत नहीं है। उपलब्ध ज़ोन हैं: "
+                    f"ज़ोन 1 (गेहूं), ज़ोन 2 (कपास), ज़ोन 3 (टमाटर), और ज़ोन 4 (सरसों)।"
+                    if is_hindi
+                    else f"Zone or sector '{resolved_zone}' is not registered on this farm. Active zones are: "
+                    f"Zone 1 (Wheat), Zone 2 (Cotton), Zone 3 (Tomato), and Zone 4 (Mustard)."
+                )
+                self._last_responses[session_key] = reply
+                return self._build_response(
+                    reply=reply,
+                    intent="fertilizer_consumption_query",
+                    confidence=1.0,
+                    repeatable=True,
+                    execution_trace=trace,
+                    provider_status="fast_path",
+                    sources=[f"Simulated Telemetry ({resolved_zone})"],
+                    metadata=fert_data,
+                )
+
             zone_info = telemetry_service.get_zone(resolved_zone) or {}
             zone_name = zone_info.get("zone_name", resolved_zone)
             crop_name = zone_info.get("crop", "crop")
@@ -1130,6 +1150,43 @@ class LLMOrchestrator(BaseConversationProvider):
             or (("नाइट्रोजन" in trimmed or "nitrogen" in trimmed.lower()) and any(w in trimmed.lower() for w in ["दर", "rate", "खपत"]))
         ):
             dep_res = telemetry_service.calculate_nutrient_depletion_rate(resolved_zone, "nitrogen", 7)
+            if dep_res.get("status") == "unknown_zone":
+                reply = (
+                    f"ज़ोन या सेक्टर '{resolved_zone}' पंजीकृत नहीं है, इसलिए नाइट्रोजन डिप्लीशन दर की गणना नहीं की जा सकती। "
+                    f"कृपया सक्रिय ज़ोन (ज़ोन 1, ज़ोन 2, ज़ोन 3, या सेक्टर 4) निर्दिष्ट करें।"
+                    if is_hindi
+                    else f"Zone or sector '{resolved_zone}' is not registered on this farm, so the nitrogen depletion rate cannot be calculated. "
+                    f"Please specify an active zone (Zone 1, Zone 2, Zone 3, or Sector 4)."
+                )
+                self._last_responses[session_key] = reply
+                return self._build_response(
+                    reply=reply,
+                    intent="nitrogen_depletion_query",
+                    confidence=1.0,
+                    repeatable=True,
+                    execution_trace=trace,
+                    provider_status="fast_path",
+                    sources=[f"Simulated Telemetry ({resolved_zone})"],
+                    metadata=dep_res,
+                )
+            elif dep_res.get("status") == "insufficient_data":
+                reply = (
+                    f"इस ज़ोन के लिए आवश्यक समयावधि में पर्याप्त ऐतिहासिक टेलीमेट्री रिकॉर्ड उपलब्ध नहीं हैं।"
+                    if is_hindi
+                    else f"Insufficient historical telemetry records available for this zone to compute a reliable depletion rate."
+                )
+                self._last_responses[session_key] = reply
+                return self._build_response(
+                    reply=reply,
+                    intent="nitrogen_depletion_query",
+                    confidence=1.0,
+                    repeatable=True,
+                    execution_trace=trace,
+                    provider_status="fast_path",
+                    sources=[f"Simulated Telemetry ({resolved_zone})"],
+                    metadata=dep_res,
+                )
+
             zone_info = telemetry_service.get_zone(resolved_zone) or {}
             zone_name = zone_info.get("zone_name", resolved_zone)
             crop_name = zone_info.get("crop", "crop")
@@ -1194,18 +1251,9 @@ class LLMOrchestrator(BaseConversationProvider):
             or re.search(r"(npk|नाइट्रोजन|फॉस्फोरस|पोटाश|पोषक\s*तत्व)", trimmed, re.IGNORECASE)
         ) and not any(w in lower_trimmed for w in ["depletion", "डिप्लीशन", "rate", "दर", "consumption", "खपत", "consumed", "खर्च"]):
             tel_res = await self._tools["latest_telemetry"].execute(zone_id=resolved_zone)
-            npk_calibrated = {
-                "DEMO-ZONE-001": (142.5, 28.4, 185.2),
-                "DEMO-ZONE-002": (168.0, 34.2, 210.5),
-                "DEMO-ZONE-003": (None, 41.0, 195.0),
-                "DEMO-ZONE-004": (135.0, 26.0, 172.0),
-            }
-            if resolved_zone in npk_calibrated:
-                n_val, p_val, k_val = npk_calibrated[resolved_zone]
-            else:
-                n_val = tel_res.get("nitrogen_mg_kg")
-                p_val = tel_res.get("phosphorus_mg_kg")
-                k_val = tel_res.get("potassium_mg_kg")
+            n_val = tel_res.get("nitrogen_mg_kg")
+            p_val = tel_res.get("phosphorus_mg_kg")
+            k_val = tel_res.get("potassium_mg_kg")
 
             zone_name = tel_res.get("zone_name", resolved_zone)
             ts = format_to_ist(tel_res.get("reading_timestamp_iso"))

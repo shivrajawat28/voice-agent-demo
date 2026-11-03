@@ -9,7 +9,7 @@ Phase 30 Regression Test Suite:
 7. Hindi Voice Consistency (Locked turn_language and turn_voice, pure Hindi templates)
 """
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from app.services.orchestrator import LLMOrchestrator
 from app.providers.mock_llm import MockLLMProvider
 from app.services.telemetry_service import telemetry_service
@@ -351,3 +351,95 @@ async def test_device_warning_query(orchestrator):
     assert "DEMO-DEVICE-003" in res.reply
     assert "16.0%" in res.reply
     assert "uncalibrated" in res.reply.lower()
+
+
+# ---------------------------------------------------------------------------
+# 8. Phase 30.1: Historical Data Integrity & Regression Proofs
+# ---------------------------------------------------------------------------
+def test_nitrogen_rate_changes_when_historical_readings_change():
+    """Proves depletion rate is calculated from observed readings, not hardcoded."""
+    # Baseline: 165.0 to 142.5 over 7.0 days = 3.2 mg/kg/day
+    base_res = telemetry_service.calculate_nutrient_depletion_rate("DEMO-ZONE-001", "nitrogen", 7)
+    assert base_res["status"] == "calculated"
+    assert base_res["depletion_rate_mg_kg_day"] == 3.2
+    assert base_res["initial_reading"] == 165.0
+    assert base_res["final_reading"] == 142.5
+
+    # Modify history dynamically: Initial 180.0, Final 138.0 over exactly 7.0 days
+    # Expected rate: (180.0 - 138.0) / 7.0 = 42.0 / 7.0 = 6.0 mg/kg/day
+    now = datetime.now(timezone.utc)
+    custom_series = [
+        {"timestamp_iso": (now - timedelta(days=7)).isoformat(), "nitrogen_mg_kg": 180.0},
+        {"timestamp_iso": (now - timedelta(days=3.5)).isoformat(), "nitrogen_mg_kg": 159.0},
+        {"timestamp_iso": now.isoformat(), "nitrogen_mg_kg": 138.0},
+    ]
+    telemetry_service._history["DEMO-ZONE-001"]["7d"] = custom_series
+
+    try:
+        dyn_res = telemetry_service.calculate_nutrient_depletion_rate("DEMO-ZONE-001", "nitrogen", 7)
+        assert dyn_res["status"] == "calculated"
+        assert dyn_res["initial_reading"] == 180.0
+        assert dyn_res["final_reading"] == 138.0
+        assert dyn_res["depletion_rate_mg_kg_day"] == 6.0
+        assert dyn_res["total_change"] == -42.0
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+
+def test_missing_readings_produce_insufficient_data():
+    """Proves missing or insufficient history produces explicit unavailable status."""
+    telemetry_service._history["DEMO-ZONE-001"]["7d"] = []
+    try:
+        res = telemetry_service.calculate_nutrient_depletion_rate("DEMO-ZONE-001", "nitrogen", 7)
+        assert res["status"] == "insufficient_data"
+        assert res["valid"] is False
+        assert res["available"] is False
+        assert "Insufficient historical telemetry records" in res["reason"]
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+
+def test_uncalibrated_readings_excluded_and_zone3_no_fabrication():
+    """Proves Zone 3 uncalibrated nitrogen probe is never fabricated."""
+    res = telemetry_service.calculate_nutrient_depletion_rate("DEMO-ZONE-003", "nitrogen", 7)
+    assert res["status"] == "uncalibrated"
+    assert res["valid"] is False
+    assert res["available"] is False
+    assert res.get("initial_reading") is None
+    assert res.get("depletion_rate_mg_kg_day") is None
+    assert "UNCALIBRATED" in res["reason"]
+
+
+def test_unknown_zones_never_return_zone1_readings():
+    """Proves unknown zones return explicit error and never fallback to Zone 1."""
+    # Fertilizer consumption
+    fert_res = telemetry_service.get_fertilizer_consumption("DEMO-ZONE-UNKNOWN-999")
+    assert fert_res["status"] == "unknown_zone"
+    assert fert_res["available"] is False
+    assert fert_res["current_npk"] is None
+    assert "not registered on this farm" in fert_res["reason"]
+
+    # Nutrient depletion
+    dep_res = telemetry_service.calculate_nutrient_depletion_rate("DEMO-ZONE-UNKNOWN-999")
+    assert dep_res["status"] == "unknown_zone"
+    assert dep_res["valid"] is False
+    assert dep_res["available"] is False
+    assert "not registered on this farm" in dep_res["reason"]
+
+
+def test_fertilizer_consumption_unavailable_without_application_records():
+    """Proves fertilizer consumption is unavailable across all zones without flow meter logs."""
+    for zone_id in ["DEMO-ZONE-001", "DEMO-ZONE-002", "DEMO-ZONE-003", "DEMO-ZONE-004"]:
+        res = telemetry_service.get_fertilizer_consumption(zone_id)
+        assert res["available"] is False
+        assert res["status"] == "unavailable"
+        assert "volumetric fertilizer consumption" in res["reason"]
+        assert "flow meter" in res["required_hardware"].lower()
+        assert res["current_npk"] is not None
+        # Zone 3 nitrogen must be uncalibrated / None
+        if zone_id == "DEMO-ZONE-003":
+            assert res["current_npk"]["nitrogen_mg_kg"] is None
+            assert res["current_npk"]["nitrogen_status"] == "uncalibrated"
+        else:
+            assert res["current_npk"]["nitrogen_mg_kg"] > 0
+            assert res["current_npk"]["nitrogen_status"] == "active"
