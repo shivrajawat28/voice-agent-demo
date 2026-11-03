@@ -607,8 +607,8 @@ class LLMOrchestrator(BaseConversationProvider):
             re.search(r"\b(turn\s*off|shut\s*off|stop)\s+(the\s+)?(automated\s+)?(irrigation|pump|cycle|motor|watering)\b", trimmed, re.IGNORECASE)
             or re.search(r"\b(pump|irrigation|motor)\s+(off|stop)\b", trimmed, re.IGNORECASE)
             or re.search(r"\b(stop\s*(the\s+)?(irrigation|watering))\b", trimmed, re.IGNORECASE)
-            or re.search(r"(पंप|सिंचाई|पानी|मोटर)\s*(बंद\s*कर\s*दो|बंद\s*करो|रोको|स्टॉप|ऑफ\s*करो|ऑफ\s*कर\s*दो)", trimmed)
-            or re.search(r"(बंद\s*कर\s*दो|बंद\s*करो|रोको)\s*(पंप|सिंचाई|मोटर|पानी)", trimmed)
+            or re.search(r"(पंप|सिंचाई|पानी|मोटर).*(बंद\s*(कर\s*दो|करो|करें|कर\s*दीजिए)|रोको|रोकें|स्टॉप|ऑफ\s*(करो|करें|कर\s*दो|कर\s*दीजिए))", trimmed)
+            or re.search(r"(बंद\s*(कर\s*दो|करो|करें|कर\s*दीजिए)|रोको|रोकें).*(पंप|सिंचाई|मोटर|पानी)", trimmed)
         ):
             success, reply = pump_control_service.emergency_stop(session_key, resolved_zone, "hi-IN" if is_hindi else "en-US")
             self._last_responses[session_key] = reply
@@ -649,8 +649,8 @@ class LLMOrchestrator(BaseConversationProvider):
         if not is_pump_advice and (
             re.search(r"\b(turn\s*on|start|activate|switch\s*on|run|trigger)\s+(the\s+)?(automated\s+)?(irrigation|pump|cycle|motor|watering)\b", trimmed, re.IGNORECASE)
             or re.search(r"\b(pump|irrigation|motor)\s+(on|start)\b", trimmed, re.IGNORECASE)
-            or re.search(r"(पंप|पानी\s*का\s*पंप|सिंचाई|मोटर)\s*(चालू\s*कर\s*दो|चालू\s*करो|ऑन\s*कर\s*दो|ऑन\s*करो|शुरू\s*करो|शुरू\s*कर\s*दो)", trimmed)
-            or re.search(r"(चालू\s*कर\s*दो|चालू\s*करो|शुरू\s*करो|ऑन\s*करो)\s*(पंप|सिंचाई|मोटर|पानी)", trimmed)
+            or re.search(r"(पंप|पानी\s*का\s*पंप|सिंचाई|मोटर|सिंचाई\s*चक्र).*(चालू\s*(कर\s*दो|करो|करें|कर\s*दीजिए)|ऑन\s*(कर\s*दो|करो|करें|कर\s*दीजिए)|शुरू\s*(करो|करें|कर\s*दो|कर\s*दीजिए)|चलाएं|चलाओ)", trimmed)
+            or re.search(r"(चालू\s*(कर\s*दो|करो|करें|कर\s*दीजिए)|शुरू\s*(करो|करें|कर\s*दो|कर\s*दीजिए)|ऑन\s*(करो|करें|कर\s*दो|कर\s*दीजिए)).*(पंप|सिंचाई|मोटर|पानी)", trimmed)
         ):
             action = pump_control_service.create_action(
                 session_id=session_key,
@@ -1126,8 +1126,8 @@ class LLMOrchestrator(BaseConversationProvider):
         if not is_conceptual_or_exploratory and (
             re.search(r"\b(nitrogen|n)\s*(depletion|loss|depleting)\s*(rate)?\b", trimmed, re.IGNORECASE)
             or re.search(r"\b(depletion\s*rate|rate\s*of\s*(nitrogen|n)\s*loss|average\s*nitrogen\s*depletion)\b", trimmed, re.IGNORECASE)
-            or re.search(r"(नाइट्रोजन|n)\s*(डिप्लीशन|घटने|कमी|कमी\s*की\s*दर|नुकसान\s*की\s*दर)", trimmed, re.IGNORECASE)
-            or re.search(r"(नाइट्रोजन|n)\s*डिप्लीशन\s*रेट", trimmed, re.IGNORECASE)
+            or re.search(r"(नाइट्रोजन|n).*(डिप्लीशन|घटने|कमी|खपत|नुकसान|रेट|दर)", trimmed, re.IGNORECASE)
+            or (("नाइट्रोजन" in trimmed or "nitrogen" in trimmed.lower()) and any(w in trimmed.lower() for w in ["दर", "rate", "खपत"]))
         ):
             dep_res = telemetry_service.calculate_nutrient_depletion_rate(resolved_zone, "nitrogen", 7)
             zone_info = telemetry_service.get_zone(resolved_zone) or {}

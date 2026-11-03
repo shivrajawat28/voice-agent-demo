@@ -158,6 +158,19 @@ async def test_nitrogen_depletion_rate_wheat(orchestrator):
 
 
 @pytest.mark.anyio
+async def test_nitrogen_depletion_rate_hindi(orchestrator):
+    res = await orchestrator.process_query(
+        "इस सप्ताह नाइट्रोजन की खपत दर क्या रही?",
+        language="hi-IN",
+        session_id="test-n-hi",
+    )
+    assert res.intent == "nitrogen_depletion_query"
+    assert "3.2" in res.reply
+    assert "mg/kg/day" in res.reply
+    assert "IST" in res.reply
+
+
+@pytest.mark.anyio
 async def test_nitrogen_depletion_rate_zone3_uncalibrated(orchestrator):
     res = await orchestrator.process_query(
         "Tell me the nitrogen depletion rate in zone 3.",
@@ -210,6 +223,20 @@ async def test_start_irrigation_sector4_creates_approval_card(orchestrator):
     assert res.metadata.get("zone_id") == "DEMO-ZONE-004"
     assert res.metadata.get("simulation_mode") is True
     assert res.metadata.get("actuation_permitted") is False
+
+
+@pytest.mark.anyio
+async def test_start_irrigation_sector4_hindi_creates_approval_card(orchestrator):
+    res = await orchestrator.process_query(
+        "सेक्टर 4 के लिए स्वचालित सिंचाई चक्र शुरू करें।",
+        language="hi-IN",
+        session_id="test-sec4-1-hi",
+    )
+    assert res.intent == "pump_activation_request"
+    assert res.pending_action is not None
+    assert res.pending_action.zone_id == "DEMO-ZONE-004"
+    assert "सेक्टर 4" in res.reply
+    assert "अनुमति" in res.reply
 
 
 @pytest.mark.anyio
