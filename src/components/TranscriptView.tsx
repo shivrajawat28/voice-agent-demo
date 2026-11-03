@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChatMessage, StreamingPlaybackState } from '../types/voiceAgent';
 import { PumpApprovalCard } from './PumpApprovalCard';
+import { formatToIST } from '../utils/timezone';
 import {
   Bot,
   Volume2,
@@ -143,11 +144,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         ) : (
           transcript.map((msg, mIdx) => {
             const isUser = msg.role === 'user';
-            const formattedTime = new Date(msg.timestamp).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-            });
+            const formattedTime = formatToIST(msg.timestamp, false);
             const hasTrace =
               (msg.agentResults && msg.agentResults.length > 0) ||
               (msg.executionTrace && msg.executionTrace.length > 0);

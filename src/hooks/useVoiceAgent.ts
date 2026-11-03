@@ -257,7 +257,13 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
 
   // Progressive Sentence-Level Audio Playback Queue
   const playSentenceQueue = useCallback(
-    async (sentences: string[], msgId: string, abortSignal: AbortSignal) => {
+    async (
+      sentences: string[],
+      msgId: string,
+      abortSignal: AbortSignal,
+      turnLanguage?: string,
+      turnVoice?: string
+    ) => {
       const vc = voiceControllerRef.current;
       const sm = stateMachineRef.current;
 
@@ -324,6 +330,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         const chunkText = chunks[chunkIdx].text;
         const tReqStart = performance.now();
 
+        const effectiveLang = turnLanguage || (/[\u0900-\u097F]/.test(chunkText) ? 'hi-IN' : language);
+        const effectiveVoice = turnVoice || (effectiveLang.startsWith('hi') ? 'Nalini' : selectedVoice);
+
         try {
           const timeoutCtrl = new AbortController();
           const timer = setTimeout(() => timeoutCtrl.abort(), 10000);
@@ -336,8 +345,8 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               text: chunkText,
-              language,
-              voice_id: selectedVoice,
+              language: effectiveLang,
+              voice_id: effectiveVoice,
               speed: ttsSpeed,
             }),
             signal: timeoutCtrl.signal,
@@ -613,7 +622,13 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
       setPlaybackState('STREAMING TEXT');
 
       // 4. Progressive Sentence-Level Audio Playback
-      playSentenceQueue(sentenceList, agentMsgId, abortController.signal);
+      const turnLang =
+        engineResult.metadata?.turn_language ||
+        (/[\u0900-\u097F]/.test(engineResult.text) ? 'hi-IN' : language);
+      const turnVoice =
+        engineResult.metadata?.turn_voice ||
+        (turnLang.startsWith('hi') ? 'Nalini' : selectedVoice);
+      playSentenceQueue(sentenceList, agentMsgId, abortController.signal, turnLang, turnVoice);
     },
     [activeZoneId, language, playSentenceQueue]
   );
@@ -821,7 +836,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         ? lastAgentMsg.sentences
         : [lastAgentMsg.text];
 
-    playSentenceQueue(sentenceList, lastAgentMsg.id, abortController.signal);
+    const turnLang = /[\u0900-\u097F]/.test(lastAgentMsg.text) ? 'hi-IN' : language;
+    const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+    playSentenceQueue(sentenceList, lastAgentMsg.id, abortController.signal, turnLang, turnVoice);
   }, [playSentenceQueue, transcript]);
 
   const clearTranscript = useCallback(() => {
@@ -960,7 +977,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           playbackAbortRef.current?.abort();
           const abortController = new AbortController();
           playbackAbortRef.current = abortController;
-          playSentenceQueue(sentenceList, confirmMsgId, abortController.signal);
+          const turnLang = /[\u0900-\u097F]/.test(confirmMsg.text) ? 'hi-IN' : language;
+          const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+          playSentenceQueue(sentenceList, confirmMsgId, abortController.signal, turnLang, turnVoice);
         }
       } catch (err) {
         console.error('Error approving pump action:', err);
@@ -1017,7 +1036,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           playbackAbortRef.current?.abort();
           const abortController = new AbortController();
           playbackAbortRef.current = abortController;
-          playSentenceQueue(sentenceList, cancelMsgId, abortController.signal);
+          const turnLang = /[\u0900-\u097F]/.test(cancelMsg.text) ? 'hi-IN' : language;
+          const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+          playSentenceQueue(sentenceList, cancelMsgId, abortController.signal, turnLang, turnVoice);
         }
       } catch (err) {
         console.error('Error rejecting pump action:', err);
@@ -1076,7 +1097,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             : [targetMsg.text];
 
         setRevealedSentenceCount((prev) => ({ ...prev, [msgId]: sentenceList.length }));
-        playSentenceQueue(sentenceList, msgId, abortController.signal);
+        const turnLang = /[\u0900-\u097F]/.test(targetMsg.text) ? 'hi-IN' : language;
+        const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+        playSentenceQueue(sentenceList, msgId, abortController.signal, turnLang, turnVoice);
       },
       [playSentenceQueue, transcript]
     ),

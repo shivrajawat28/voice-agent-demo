@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatToIST } from '../utils/timezone';
 import {
   Droplets,
   Thermometer,
@@ -124,7 +125,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
           <div className="text-[10px] text-slate-500 font-mono">
             Zone: <strong className="text-slate-300">{zoneId}</strong> • Reading Timestamp:{' '}
-            {new Date().toLocaleTimeString()} • Source: simulated-iot-node
+            {formatToIST(new Date(), true)} • Source: simulated-iot-node
           </div>
         </div>
 
