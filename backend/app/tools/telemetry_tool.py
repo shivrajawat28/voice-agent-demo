@@ -11,8 +11,8 @@ from app.tools.base import BaseTool
 
 
 def _get_telemetry_service():
-    from app.services.telemetry_service import telemetry_service
-    return telemetry_service
+    from app.services.telemetry_service import get_telemetry_provider
+    return get_telemetry_provider()
 
 
 class LatestTelemetryTool(BaseTool):
@@ -39,53 +39,67 @@ class LatestTelemetryTool(BaseTool):
         **kwargs,
     ) -> Dict[str, Any]:
         svc = _get_telemetry_service()
-        data = svc.get_latest_telemetry(zone_id=zone_id)
-        profile = svc.get_canonical_soil_profile(zone_id=zone_id).model_dump()
-        return {
-            "status": "success",
-            "data_source": "simulated",
-            "is_simulated": True,
-            "actuation_permitted": False,
-            "farm_id": data.get("farm_id", "DEMO-FARM-001"),
-            "farm_name": data.get("farm_name"),
-            "zone_id": data.get("zone_id"),
-            "zone_name": data.get("zone_name"),
-            "crop": data.get("crop"),
-            "variety": data.get("variety"),
-            "growth_stage": data.get("growth_stage"),
-            "soil_type": data.get("soil_type"),
-            "device_id": data.get("device_id"),
-            "device_status": data.get("device_status"),
-            "battery_level_pct": data.get("battery_level_pct"),
-            "water_tank_level_pct": data.get("water_tank_level_pct"),
-            "reading_timestamp_iso": data.get("reading_timestamp_iso"),
-            # Sensor parameters
-            "soil_moisture_pct": data.get("soil_moisture_pct"),
-            "nitrogen_mg_kg": data.get("nitrogen_mg_kg"),
-            "phosphorus_mg_kg": data.get("phosphorus_mg_kg"),
-            "potassium_mg_kg": data.get("potassium_mg_kg"),
-            "soil_temperature_c": data.get("soil_temperature_c"),
-            "ph": data.get("ph"),
-            "electrical_conductivity_ds_m": data.get("electrical_conductivity_ds_m"),
-            "canonical_soil_profile": profile,
-            "completeness_ratio": profile.get("completeness_ratio"),
-            "available_count": profile.get("available_count"),
-            "total_count": profile.get("total_count", 7),
-            "overall_soil_health_index": profile.get("overall_soil_health_index"),
-            "units": {
-                "soil_moisture_pct": "%",
-                "nitrogen_mg_kg": "mg/kg",
-                "phosphorus_mg_kg": "mg/kg",
-                "potassium_mg_kg": "mg/kg",
-                "soil_temperature_c": "°C",
-                "ph": "pH scale (0-14)",
-                "electrical_conductivity_ds_m": "dS/m",
-                "battery_level_pct": "%",
-                "water_tank_level_pct": "%",
-            },
-            "missing_fields": data.get("missing_fields", []),
-            "warnings": data.get("warnings", []),
-        }
+        try:
+            data = svc.get_latest_telemetry(zone_id=zone_id)
+            if not data:
+                return {
+                    "status": "error",
+                    "error": f"Zone '{zone_id}' not found in farm telemetry dataset.",
+                    "zone_id": zone_id,
+                }
+            profile_obj = svc.get_canonical_soil_profile(zone_id=zone_id)
+            profile = profile_obj.model_dump() if hasattr(profile_obj, "model_dump") else (profile_obj if isinstance(profile_obj, dict) else {})
+            return {
+                "status": "success",
+                "data_source": "simulated",
+                "is_simulated": True,
+                "actuation_permitted": False,
+                "farm_id": data.get("farm_id", "DEMO-FARM-001"),
+                "farm_name": data.get("farm_name"),
+                "zone_id": data.get("zone_id", zone_id),
+                "zone_name": data.get("zone_name"),
+                "crop": data.get("crop"),
+                "variety": data.get("variety"),
+                "growth_stage": data.get("growth_stage"),
+                "soil_type": data.get("soil_type"),
+                "device_id": data.get("device_id"),
+                "device_status": data.get("device_status"),
+                "battery_level_pct": data.get("battery_level_pct"),
+                "water_tank_level_pct": data.get("water_tank_level_pct"),
+                "reading_timestamp_iso": data.get("reading_timestamp_iso"),
+                # Sensor parameters
+                "soil_moisture_pct": data.get("soil_moisture_pct"),
+                "nitrogen_mg_kg": data.get("nitrogen_mg_kg"),
+                "phosphorus_mg_kg": data.get("phosphorus_mg_kg"),
+                "potassium_mg_kg": data.get("potassium_mg_kg"),
+                "soil_temperature_c": data.get("soil_temperature_c"),
+                "ph": data.get("ph"),
+                "electrical_conductivity_ds_m": data.get("electrical_conductivity_ds_m"),
+                "canonical_soil_profile": profile,
+                "completeness_ratio": profile.get("completeness_ratio"),
+                "available_count": profile.get("available_count"),
+                "total_count": profile.get("total_count", 7),
+                "overall_soil_health_index": profile.get("overall_soil_health_index"),
+                "units": {
+                    "soil_moisture_pct": "%",
+                    "nitrogen_mg_kg": "mg/kg",
+                    "phosphorus_mg_kg": "mg/kg",
+                    "potassium_mg_kg": "mg/kg",
+                    "soil_temperature_c": "°C",
+                    "ph": "pH scale (0-14)",
+                    "electrical_conductivity_ds_m": "dS/m",
+                    "battery_level_pct": "%",
+                    "water_tank_level_pct": "%",
+                },
+                "missing_fields": data.get("missing_fields", []),
+                "warnings": data.get("warnings", []),
+            }
+        except KeyError as ke:
+            return {
+                "status": "error",
+                "error": str(ke),
+                "zone_id": zone_id,
+            }
 
 
 class SoilProfileTool(BaseTool):
@@ -106,11 +120,18 @@ class SoilProfileTool(BaseTool):
         )
 
     async def execute(self, zone_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        profile = _get_telemetry_service().get_canonical_soil_profile(zone_id=zone_id)
-        return {
-            "status": "success",
-            "profile": profile.model_dump(),
-        }
+        try:
+            profile = _get_telemetry_service().get_canonical_soil_profile(zone_id=zone_id)
+            return {
+                "status": "success",
+                "profile": profile.model_dump(),
+            }
+        except KeyError as ke:
+            return {
+                "status": "error",
+                "error": str(ke),
+                "zone_id": zone_id,
+            }
 
 
 

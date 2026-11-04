@@ -18,12 +18,14 @@ from app.models.telemetry import (
     SoilParameterReading,
     CanonicalSoilProfile,
 )
+from app.providers.telemetry_base import BaseTelemetryProvider
 
 
-class TelemetryService:
+class TelemetryService(BaseTelemetryProvider):
     """
     In-memory stateful simulated farm telemetry store.
-    Supports 3 distinct agricultural zones, historical trends, device health, and alerts.
+    Implements BaseTelemetryProvider for the FertoBot AI Agronomist.
+    Supports 4 distinct agricultural zones, historical trends, device health, and alerts.
     """
 
     def __init__(self):
@@ -340,17 +342,24 @@ class TelemetryService:
         return False
 
     def get_zone(self, zone_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Retrieves metadata and latest reading for a specific zone."""
+        """Retrieves metadata and latest reading for a specific zone. Returns None if unknown."""
+        if not zone_id or zone_id not in self._zones:
+            return None
         return self.get_latest_telemetry(zone_id)
 
     def get_latest_telemetry(self, zone_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Retrieves latest simulated telemetry for requested zone (or active zone if unspecified).
+        Returns empty dict for explicitly unknown zones (never defaults unknown zones to Zone 1).
         """
+        if zone_id is not None and zone_id not in self._zones:
+            return {}
+
+        if zone_id is not None and zone_id not in self._zones:
+            raise KeyError(f"Zone '{zone_id}' not found in canonical soil profile data.")
         target_zone = zone_id or self._active_zone_id
         if target_zone not in self._zones:
-            # Fallback to active zone or zone 1
-            target_zone = self._active_zone_id if self._active_zone_id in self._zones else "DEMO-ZONE-001"
+            target_zone = "DEMO-ZONE-001"
 
         data = copy.deepcopy(self._zones[target_zone])
         # Refresh current reading timestamp to indicate recent reading
@@ -365,10 +374,26 @@ class TelemetryService:
         zone_id: Optional[str] = None,
         parameter: str = "soil_moisture_pct",
         time_range: str = "7d",
+        hours: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Retrieves historical time-series samples and trend summary for requested zone and parameter.
+        Accepts either time_range ('24h'/'7d') or hours (e.g. 24 or 168).
+        Returns safe error payload if zone is unknown.
         """
+        if zone_id is not None and zone_id not in self._zones:
+            return {
+                "zone_id": zone_id,
+                "parameter": parameter,
+                "points": [],
+                "trend_direction": "unknown",
+                "trend_summary": f"Zone '{zone_id}' not found in farm telemetry records.",
+                "data_source": "unavailable",
+                "is_simulated": True,
+            }
+
+        if zone_id is not None and zone_id not in self._zones:
+            raise KeyError(f"Zone '{zone_id}' not found in canonical soil profile data.")
         target_zone = zone_id or self._active_zone_id
         if target_zone not in self._zones:
             target_zone = "DEMO-ZONE-001"
@@ -750,6 +775,8 @@ class TelemetryService:
         6. Soil pH [pH scale 0-14]
         7. Electrical Conductivity (EC) [dS/m (and raw uS/cm)]
         """
+        if zone_id is not None and zone_id not in self._zones:
+            raise KeyError(f"Zone '{zone_id}' not found in canonical soil profile data.")
         target_zone = zone_id or self._active_zone_id
         if target_zone not in self._zones:
             target_zone = "DEMO-ZONE-001"
@@ -1147,5 +1174,49 @@ class TelemetryService:
         self._init_default_data()
 
 
-# Global singleton instance of TelemetryService
-telemetry_service = TelemetryService()
+# Base simulated provider instance
+_default_simulated_telemetry_provider: BaseTelemetryProvider = TelemetryService()
+_active_telemetry_provider: BaseTelemetryProvider = _default_simulated_telemetry_provider
+
+
+def get_telemetry_provider() -> BaseTelemetryProvider:
+    """Authoritative dynamic accessor for the active telemetry provider."""
+    global _active_telemetry_provider
+    return _active_telemetry_provider
+
+
+def get_global_telemetry_provider() -> BaseTelemetryProvider:
+    """Alias for get_telemetry_provider()."""
+    return get_telemetry_provider()
+
+
+def set_global_telemetry_provider(provider: BaseTelemetryProvider) -> None:
+    """Sets the global telemetry provider instance (e.g. for plugging in live database adapters)."""
+    global _active_telemetry_provider
+    if not isinstance(provider, BaseTelemetryProvider):
+        raise TypeError("Provider must implement BaseTelemetryProvider")
+    _active_telemetry_provider = provider
+
+
+def reset_global_telemetry_provider() -> None:
+    """Resets global telemetry provider back to the default simulated provider."""
+    global _active_telemetry_provider
+    _active_telemetry_provider = _default_simulated_telemetry_provider
+
+
+class _TelemetryServiceProxy:
+    """
+    Transparent proxy that delegates all attribute access to get_telemetry_provider().
+    Completely eliminates stale module-reference caching across imports.
+    """
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_telemetry_provider(), name)
+
+    def __repr__(self) -> str:
+        return f"<_TelemetryServiceProxy -> {get_telemetry_provider()!r}>"
+
+
+# Global singleton instance of TelemetryService (wrapped in proxy for safe reference resolution)
+telemetry_service: Any = _TelemetryServiceProxy()
+
+

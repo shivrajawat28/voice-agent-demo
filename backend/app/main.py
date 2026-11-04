@@ -296,6 +296,7 @@ from pydantic import BaseModel as PyBaseModel
 
 class SetActiveZoneRequest(PyBaseModel):
     zone_id: str
+    session_id: Optional[str] = None
 
 
 @app.get("/api/farm/overview", tags=["Farm Telemetry"])
@@ -333,7 +334,13 @@ async def get_farm_zones_endpoint():
 @app.get("/api/farm/telemetry/latest", tags=["Farm Telemetry"])
 async def get_latest_telemetry_endpoint(zone_id: Optional[str] = Query(default=None)):
     """Returns latest simulated telemetry readings for a specific zone."""
-    return telemetry_service.get_latest_telemetry(zone_id=zone_id)
+    data = telemetry_service.get_latest_telemetry(zone_id=zone_id)
+    if zone_id and not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found in farm telemetry records.",
+        )
+    return data
 
 
 @app.get("/api/farm/telemetry/history", tags=["Farm Telemetry"])
@@ -358,7 +365,9 @@ async def get_farm_alerts_endpoint(zone_id: Optional[str] = Query(default=None))
 
 @app.post("/api/farm/active-zone", tags=["Farm Telemetry"])
 async def set_active_zone_endpoint(request: SetActiveZoneRequest):
-    """Sets the active farm zone used for context-grounded voice reasoning."""
+    """Sets the active farm zone used for context-grounded voice reasoning (optionally isolated per session)."""
+    if request.session_id:
+        orchestrator.set_session_zone(request.session_id, request.zone_id)
     success = telemetry_service.set_active_zone_id(request.zone_id)
     if not success:
         raise HTTPException(
@@ -368,6 +377,7 @@ async def set_active_zone_endpoint(request: SetActiveZoneRequest):
     return {
         "status": "ok",
         "active_zone_id": request.zone_id,
+        "session_id": request.session_id,
         "message": f"Active farm zone set to {request.zone_id}",
     }
 
@@ -395,7 +405,11 @@ async def get_canonical_soil_profile_endpoint(zone_id: Optional[str] = Query(def
     engineering units, crop benchmarks, completeness ratio, and overall health index.
     """
     zid = zone_id or telemetry_service.get_active_zone_id()
-    return telemetry_service.get_canonical_soil_profile(zone_id=zid)
+    try:
+        return telemetry_service.get_canonical_soil_profile(zone_id=zid)
+    except KeyError as ke:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ke))
+
 
 
 @app.get("/api/farm/telemetry/sodium", tags=["Farm Telemetry"])
