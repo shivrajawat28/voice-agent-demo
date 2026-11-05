@@ -21,14 +21,15 @@ CROP_THRESHOLDS = {
         "soil_type_preference": "Well-drained fertile loam or clay loam",
         "npk_requirement_ratio": "120:60:40 (N:P2O5:K2O kg/ha)",
         "critical_growth_stages": [
-            "CRI (Crown Root Initiation at 21 days)",
+            "CRI (Crown Root Initiation at 20-25 days after sowing - First Irrigation)",
             "Tillering (40-45 days)",
-            "Jointing",
-            "Flowering / Heading",
-            "Milking / Grain Filling",
-            "Dough stage",
+            "Jointing (60-65 days)",
+            "Flowering / Heading (80-85 days)",
+            "Milking / Grain Filling (100-105 days)",
+            "Dough stage (115-120 days)",
         ],
-        "irrigation_guideline": "5 to 6 irrigations; CRI stage is the most critical where moisture stress causes severe yield loss.",
+        "irrigation_guideline": "5 to 6 irrigations; CRI stage (20-25 days after sowing) is the absolute first and most critical irrigation where moisture stress causes severe irreversible root stunting and yield loss.",
+        "first_irrigation_timing": "Crown Root Initiation (CRI / ताज मूल अवस्था), 20-25 days after sowing (बुवाई के 20-25 दिन बाद). Moisture stress at this stage leads to 30-40% yield drop.",
     },
     "cotton": {
         "crop_name": "Cotton (कपास)",
@@ -113,8 +114,13 @@ CROP_THRESHOLDS = {
         "ec_tolerance_ds_m": 2.5,
         "soil_type_preference": "Deep, well-drained fertile loam rich in organic matter",
         "npk_requirement_ratio": "120:60:40 (N:P2O5:K2O kg/ha)",
-        "critical_growth_stages": ["Taselling", "Silking", "Grain filling"],
-        "irrigation_guideline": "Critical at silking and grain filling; cannot tolerate standing water.",
+        "critical_growth_stages": [
+            "Knee-high (घुटने की ऊंचाई, 30-35 days)",
+            "Tasseling (मंजर निकलना, 45-50 days)",
+            "Silking / Cob filling (सिल्क निकलना और भुट्टे में दाने भरना, 60-70 days)",
+        ],
+        "irrigation_guideline": "Optimal moisture is 50-75% (minimum 45%). At 40% moisture, crop experiences water stress and irrigation is required. Critical at knee-high, tasseling, and silking; strictly avoid water stagnation/waterlogging.",
+        "moisture_evaluation_40pct": "At 40% soil moisture, maize is below its critical minimum threshold of 45%. Irrigation is recommended immediately to prevent yield loss, especially during flowering/silking, while ensuring proper furrow drainage.",
     },
     "rice": {
         "crop_name": "Rice / Paddy (धान)",
@@ -271,6 +277,22 @@ AGRONOMIC_PRACTICES = {
         "recommended_frequency": "Every 2 to 3 years, or immediately before initiating a high-value commercial crop cycle.",
         "complementary_role": "FertoBot in-situ IoT probes measure real-time dynamic physical parameters (moisture, temperature, volumetric bulk EC, and continuous trend indicators) 24/7, while accredited laboratory wet-chemistry tests provide certified chemical calibration for total soil nutrient reserves.",
     },
+    "soil_ph_improvement": {
+        "principles": [
+            "Neutral/Optimal soils (pH 6.0 - 7.5): Ideal bioavailability for all macro and micronutrients. Chemical amendments (lime or gypsum) are NOT required. Maintain microbial buffer capacity by incorporating 10-12 tonnes/ha well-decomposed Farm Yard Manure (FYM) or vermicompost.",
+            "Acidic soils (pH < 6.0): High acidity causes phosphorus fixation and aluminum toxicity. Apply agricultural lime (calcium carbonate, CaCO3) based on lab buffer pH test.",
+            "Alkaline/Sodic soils (pH > 7.5 - 8.5): High sodium or carbonates impede nutrient uptake. Apply agricultural gypsum (calcium sulfate, CaSO4.2H2O) to displace sodium, accompanied by organic compost and green manuring (Dhaincha).",
+            "General rule: Never apply chemical amendments blindly without a certified soil testing laboratory report.",
+        ],
+    },
+    "fertilizer_dosage_guidance": {
+        "principles": [
+            "Blanket fixed recommendations (e.g. universal 50 kg urea + 50 kg DAP per acre) are agronomically unsafe and economically wasteful.",
+            "Essential required information before prescribing quantitative dosage: 1) Specific crop species, 2) Growth stage (basal sowing vs top-dressing), 3) Soil test report (especially baseline soil phosphorus and nitrogen), 4) Total plot acreage and irrigation status.",
+            "Basal vs Split application: DAP provides phosphorus (P2O5) and must be applied at sowing as a basal dose for early root architecture. Urea provides nitrogen (N) and should be split into 2-3 split doses (at sowing, CRI/first irrigation, and tillering) to prevent nitrate leaching.",
+            "Follow-up requirement: If the grower does not provide crop species, stage, or soil-test data, politely ask for these parameters rather than guessing a dosage.",
+        ],
+    },
 }
 
 SYMPTOM_DIAGNOSTICS = {
@@ -367,7 +389,11 @@ class CropKnowledgeTool(BaseTool):
         topic_data = None
         if topic:
             t_clean = topic.strip().lower()
-            if "ph" in t_clean:
+            if "ph_improvement" in t_clean or "sudhar" in t_clean or "remedy" in t_clean or "amendment" in t_clean:
+                topic_data = AGRONOMIC_PRACTICES["soil_ph_improvement"]
+            elif "fertilizer_quantity" in t_clean or "fertilizer_dosage" in t_clean or "matra" in t_clean or "dosage" in t_clean:
+                topic_data = AGRONOMIC_PRACTICES["fertilizer_dosage_guidance"]
+            elif "ph" in t_clean:
                 topic_data = SOIL_CHEMISTRY_KNOWLEDGE["ph_scale"]
             elif "ec" in t_clean or "conduct" in t_clean or "salin" in t_clean:
                 topic_data = SOIL_CHEMISTRY_KNOWLEDGE["electrical_conductivity"]

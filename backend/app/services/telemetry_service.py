@@ -707,6 +707,16 @@ class TelemetryService(BaseTelemetryProvider):
         zone_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Retrieves device online/offline status, battery level, and packet timestamps."""
+        if zone_id is not None and zone_id not in self._zones:
+            return {
+                "status": "error",
+                "error": f"Zone '{zone_id}' not found in farm telemetry records.",
+                "zone_id": zone_id,
+                "device_status": "unavailable",
+                "battery_level_pct": 0.0,
+                "data_source": "unavailable",
+                "is_simulated": True,
+            }
         target_zone = zone_id or self._active_zone_id
         if device_id:
             for zid, z in self._zones.items():
@@ -732,6 +742,17 @@ class TelemetryService(BaseTelemetryProvider):
 
     def get_water_tank_level(self, zone_id: Optional[str] = None) -> Dict[str, Any]:
         """Retrieves reservoir tank level."""
+        if zone_id is not None and zone_id not in self._zones:
+            return {
+                "status": "error",
+                "error": f"Zone '{zone_id}' not found in farm telemetry records.",
+                "farm_id": self._farm_id,
+                "zone_id": zone_id,
+                "water_tank_level_pct": 0.0,
+                "status": "unavailable",
+                "data_source": "unavailable",
+                "is_simulated": True,
+            }
         target_zone = zone_id or self._active_zone_id
         zone_data = self._zones.get(target_zone, self._zones["DEMO-ZONE-001"])
         lvl = zone_data.get("water_tank_level_pct", 82.0)

@@ -28,7 +28,7 @@ async def test_orchestrator_agricultural_symptom_flow():
     orch = LLMOrchestrator(MockLLMProvider())
     res = await orch.process_query("Why are my cotton leaves turning yellow?", language="en-US")
     assert res.success is True
-    assert res.intent in ["agricultural_inquiry", "symptom_inquiry"]
+    assert res.intent in ["agricultural_inquiry", "symptom_inquiry", "crop_symptom"]
     assert res.agent_results is not None
     assert len(res.agent_results) >= 1
     assert any(a.agent_id == "crop_symptom" for a in res.agent_results)

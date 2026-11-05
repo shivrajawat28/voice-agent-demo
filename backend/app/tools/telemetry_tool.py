@@ -164,7 +164,7 @@ class HistoricalTelemetryTool(BaseTool):
             time_range=time_range,
         )
         return {
-            "status": "success",
+            "status": trend.get("status", "success"),
             "data_source": "simulated",
             "is_simulated": True,
             "actuation_permitted": False,
@@ -196,7 +196,7 @@ class DeviceStatusTool(BaseTool):
             zone_id=zone_id,
         )
         return {
-            "status": "success",
+            "status": status_data.get("status", "success"),
             "data_source": "simulated",
             "is_simulated": True,
             "actuation_permitted": False,
@@ -225,7 +225,7 @@ class WaterLevelTool(BaseTool):
     ) -> Dict[str, Any]:
         level_data = _get_telemetry_service().get_water_tank_level(zone_id=zone_id)
         return {
-            "status": "success",
+            "status": level_data.get("status", "success"),
             "data_source": "simulated",
             "is_simulated": True,
             "actuation_permitted": False,

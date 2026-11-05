@@ -91,7 +91,13 @@ class CropSymptomAgent(BaseAgent):
         detected_topic = None
         detected_symptom = None
 
-        if any(w in query_lower for w in ["aur kya uga", "kya uga sakte", "suitab", "best crop", "kaunsi crop", "kaunsi fasal", "what to grow"]):
+        if any(w in query_lower for w in ["sudhar", "sudhar upay", "upay", "amendment", "improve", "remedy", "gypsum", "lime"]) and any(w in query_lower for w in ["ph", "soil", "mitti", "पीएच", "मिट्टी"]) or any(w in context.query for w in ["सुधार", "उपाय", "सुधार उपाय", "जिप्सम", "चूना"]):
+            detected_topic = "soil_improvement"
+        elif any(w in query_lower for w in ["matra", "quantity", "dosage", "dose", "kitni dale", "kitna dale", "sahi matra", "मात्रा"]) and any(w in query_lower for w in ["urea", "dap", "fertilizer", "khad", "यूरिया", "डीएपी", "खाद", "उर्वरक"]) or any(w in context.query for w in ["मात्रा", "सही मात्रा"]):
+            detected_topic = "fertilizer_quantity"
+        elif any(w in query_lower for w in ["fertilizer", "khad", "उर्वरक", "खाद"]) and any(w in query_lower for w in ["recommend", "salah", "kaunsi", "which", "सिफारिश"]):
+            detected_topic = "fertilizer_quantity"
+        elif any(w in query_lower for w in ["aur kya uga", "kya uga sakte", "suitab", "best crop", "kaunsi crop", "kaunsi fasal", "what to grow"]):
             detected_topic = "crop_suitability"
         elif any(w in query_lower for w in ["ph 6.8", "soil ph", "ph ka kya matlab", "ph scale", "पीएच"]):
             detected_topic = "ph"
@@ -164,6 +170,40 @@ class CropSymptomAgent(BaseAgent):
                     "For a precise recommendation, please share your geographic region, current cropping season, and irrigation method."
                 )
             limitations.append("Geographic location, season, and irrigation infrastructure unconfirmed by grower.")
+
+        elif detected_topic == "soil_improvement":
+            cur_ph = ph_val if ph_val is not None else 6.8
+            if is_hindi:
+                summary = (
+                    f"मिट्टी का वर्तमान pH मान {cur_ph} है, जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
+                    "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
+                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए प्रति हेक्टेयर 10 से 12 टन अच्छी सड़ी गोबर की खाद (FYM) या वर्मीकम्पोस्ट मिलाएं। "
+                    "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है।"
+                )
+            else:
+                summary = (
+                    f"The current soil pH is {cur_ph}, which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
+                    "At this pH level, chemical soil amendments like lime or gypsum are not required. "
+                    "To maintain soil health and buffering capacity, incorporate 10 to 12 tonnes/ha of well-decomposed organic manure or vermicompost. "
+                    "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5)."
+                )
+
+        elif detected_topic == "fertilizer_quantity":
+            limitations.append("Quantitative fertilizer dosage requires confirmation of crop species, growth stage, plot size, and certified soil test report.")
+            crop_label_hi = f"{detected_crop} या किसी भी फसल" if detected_crop else "फसलों"
+            crop_label_en = f"{detected_crop} or any crop" if detected_crop else "crops"
+            if is_hindi:
+                summary = (
+                    f"{crop_label_hi} के लिए बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया और डीएपी की निश्चित मात्रा तय करना वैज्ञानिक रूप से सुरक्षित नहीं है। "
+                    "सिद्धांततः डीएपी बुवाई के समय बेसल डोज के रूप में जड़ों के विकास के लिए दिया जाता है, जबकि यूरिया को 2 से 3 भागों में बांटकर (बुवाई, पहली सिंचाई/CRI, और कल्ले फूटते समय) दिया जाता है ताकि लीचिंग न हो। "
+                    "सटीक मात्रा की सिफारिश के लिए कृपया अपनी फसल का नाम, फसल की अवस्था (बुवाई या सिंचाई) और खेत का क्षेत्रफल बताएं।"
+                )
+            else:
+                summary = (
+                    f"Prescribing a fixed universal dosage of Urea and DAP for {crop_label_en} without knowing the crop growth stage and soil test results is agronomically unsafe. "
+                    "Agronomically, DAP is applied at sowing as a basal dose for early root architecture development, while Urea is split into 2-3 applications (at sowing, CRI/first irrigation, and tillering) to avoid nitrogen leaching. "
+                    "To provide an accurate recommendation, please specify: which crop are you growing, its current growth stage, and your plot size or soil-test report."
+                )
 
         elif detected_topic == "ph":
             if is_hindi:

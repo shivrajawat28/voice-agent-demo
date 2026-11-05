@@ -67,9 +67,19 @@ class IrrigationAdvisoryAgent(BaseAgent):
         trend_summary = hist_data.get("trend_summary", "Stable moisture levels")
 
         # Specific query topics
+        is_first_irrigation = (
+            any(w in query_lower for w in ["pehli sinchai", "first irrigation", "पहली सिंचाई", "पहला पानी", "1st irrigation", "first water"])
+            or (any(w in query_lower for w in ["kab kare", "kab karni", "kab de", "timing", "schedule"]) and any(w in query_lower for w in ["irrigation", "sinchai", "water", "पानी", "सिंचाई"]))
+            or any(w in context.query for w in ["पहली सिंचाई", "पहला पानी", "कब करें", "कब पानी दें", "कब सिंचाई"])
+        )
+        is_maize_query = any(w in query_lower for w in ["maize", "makka", "corn", "मक्का", "मक्के", "bhutta", "भुट्टा"])
         is_cotton_irrigation = any(w in query_lower for w in ["cotton", "कपास"]) and any(w in query_lower for w in ["manage", "kaise", "irrigation", "सिंचाई"])
         is_over_irrigation = any(w in query_lower for w in ["over-irrigation", "over irrigation", "jyada paani", "disadvantage", "nuksan", "हानि", "अत्यधिक सिंचाई"])
         is_monsoon = any(w in query_lower for w in ["monsoon", "barish", "बरसात", "मानसून", "precaution", "सावधानी"])
+
+        # Check for user-specified moisture in query (e.g. "40% नमी पर पानी देना चाहिए या नहीं?")
+        specified_moisture_match = re.search(r"(\d{1,2}(?:\.\d+)?)\s*(?:%|प्रतिशत)?\s*(?:नमी|moisture)", context.query, re.IGNORECASE) or re.search(r"(?:नमी|moisture)\s*(\d{1,2}(?:\.\d+)?)", context.query, re.IGNORECASE)
+        query_specified_moisture = float(specified_moisture_match.group(1)) if specified_moisture_match else None
 
         evidence: List[str] = [
             f"Zone: {tel_data.get('zone_name', zone_id)}",
@@ -91,7 +101,43 @@ class IrrigationAdvisoryAgent(BaseAgent):
             "Automated valve actuation is prohibited; farmer must physically manage irrigation controls.",
         ]
 
-        if is_cotton_irrigation:
+        if is_maize_query:
+            limitations.append("Maize is not registered in any monitored sensor zone on this farm (farm zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard).")
+            eval_m = query_specified_moisture if query_specified_moisture is not None else 40.0
+            if is_hindi:
+                m_notice = f"मक्का में {eval_m:.0f}% नमी पर सिंचाई अवश्य करनी चाहिए।" if eval_m <= 45.0 else f"मक्का में {eval_m:.0f}% नमी पर्याप्त है।"
+                summary = (
+                    f"मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन गेहूं, कपास, टमाटर और सरसों के हैं)। "
+                    f"कृषि विज्ञान के अनुसार, {m_notice} मक्का के लिए इष्टतम मिट्टी की नमी 50% से 75% होती है (न्यूनतम सीमा 45% है), "
+                    f"अतः {eval_m:.0f}% नमी फसल में पानी की कमी (water stress) दर्शाती है। "
+                    "विशेष रूप से घुटने की ऊंचाई (knee-high), मंजर निकलने (tasseling), या दाने भरने (silking) के समय पानी की कमी न होने दें। "
+                    "सिंचाई हल्की करें और खेत में जलभराव बिल्कुल न होने दें।"
+                )
+            else:
+                m_notice = f"At {eval_m:.0f}% soil moisture, irrigation is definitely recommended for maize." if eval_m <= 45.0 else f"At {eval_m:.0f}% soil moisture, moisture is adequate for maize."
+                summary = (
+                    "Maize is not registered in any monitored sensor zone on your farm (registered zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
+                    f"Agronomically, {m_notice} The optimal root zone moisture for maize is 50% to 75% (critical minimum is 45%), "
+                    f"meaning {eval_m:.0f}% moisture indicates water deficit stress. "
+                    "Irrigation is critical especially during knee-high, tasseling, or silking/grain filling stages. "
+                    "Ensure adequate furrow drainage as maize cannot tolerate standing water."
+                )
+
+        elif is_first_irrigation and ("wheat" in query_lower or "गेहूं" in context.query or "गेहु" in context.query or "wheat" in crop.lower()):
+            if is_hindi:
+                summary = (
+                    "गेहूं में पहली सिंचाई बुवाई के 20 से 25 दिन बाद 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर करनी चाहिए। "
+                    "यह गेहूं की सबसे महत्वपूर्ण क्रांतिक अवस्था है, जिस समय क्राउन जड़ें निकलती हैं और इस समय पानी की कमी से 30 से 40 प्रतिशत तक पैदावार घट सकती है। "
+                    f"वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी {moisture:.1f}% है। यदि बुवाई को 20-25 दिन हो चुके हैं, तो हल्की सिंचाई करें।"
+                )
+            else:
+                summary = (
+                    "In wheat, the first irrigation must be applied at the Crown Root Initiation (CRI) stage, exactly 20 to 25 days after sowing (DAS). "
+                    "This is the single most critical moisture-sensitive growth stage; drought stress during CRI permanently stunts crown root development and causes a 30% to 40% yield penalty. "
+                    f"Currently, soil moisture in your Wheat Field (Zone 1) is {moisture:.1f}%. If 20-25 days have elapsed since sowing, a light to moderate irrigation should be applied."
+                )
+
+        elif is_cotton_irrigation:
             if is_hindi:
                 summary = (
                     "कॉटन (कपास) की सिंचाई प्रबंधन की प्रमुख वैज्ञानिक विधियां: "
