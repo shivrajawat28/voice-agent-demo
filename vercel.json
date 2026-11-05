@@ -1,16 +1,9 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "https://fertobot-backend-staging.onrender.com/api/$1"
-    },
-    {
-      "source": "/health",
-      "destination": "https://fertobot-backend-staging.onrender.com/health"
-    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
@@ -22,7 +15,8 @@
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" }
+        { "key": "X-XSS-Protection", "value": "1; mode=block" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
     }
   ]

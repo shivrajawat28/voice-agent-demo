@@ -267,14 +267,34 @@ class GnaniSTTStreamHandler:
                                 err_code = event.get("code", 500)
                                 err_msg = event.get("message", "Upstream transcription error")
                                 sanitized = config.redact_sensitive(str(err_msg))
-                                logger.error(f"[{session_id}] Upstream GNANI STT error ({err_code}): {sanitized}")
-                                await client_ws.send_json({
-                                    "type": "error",
-                                    "code": err_code,
-                                    "message": f"Gnani STT: {sanitized}",
-                                    "fallback_available": True,
-                                    "session_id": session_id,
-                                })
+
+                                # Detect expected idle timeout (e.g. "no speech segment received for 60 seconds")
+                                err_msg_lower = err_msg.lower()
+                                is_idle_timeout = (
+                                    "no speech segment" in err_msg_lower
+                                    or "no speech received" in err_msg_lower
+                                    or "timed out" in err_msg_lower
+                                    or "no speech detected" in err_msg_lower
+                                )
+                                if is_idle_timeout:
+                                    logger.info(f"[{session_id}] GNANI STT closed due to idle timeout: {sanitized}")
+                                    await client_ws.send_json({
+                                        "type": "idle_timeout",
+                                        "code": "NO_SPEECH_TIMEOUT",
+                                        "message": "No speech detected. Tap the microphone to try again.",
+                                        "session_id": session_id,
+                                    })
+                                    stop_event.set()
+                                    break
+                                else:
+                                    logger.error(f"[{session_id}] Upstream GNANI STT error ({err_code}): {sanitized}")
+                                    await client_ws.send_json({
+                                        "type": "error",
+                                        "code": err_code,
+                                        "message": f"Gnani STT: {sanitized}",
+                                        "fallback_available": True,
+                                        "session_id": session_id,
+                                    })
                     except websockets.exceptions.ConnectionClosed as cc:
                         logger.info(f"[{session_id}] Upstream GNANI WebSocket closed ({cc.code}): {cc.reason}")
                     except asyncio.CancelledError:

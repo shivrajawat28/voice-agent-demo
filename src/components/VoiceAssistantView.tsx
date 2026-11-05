@@ -147,8 +147,8 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
     try {
       const sampleUrl =
         selectedVoice === 'Deepak'
-          ? '/samples/Deepak_hi_sample_1.wav'
-          : '/samples/Nalini_hi_sample_1.wav';
+          ? '/samples/sample_1_deepak.wav'
+          : '/samples/sample_1_nalini.wav';
       const audio = new Audio(sampleUrl);
       audio.onended = () => setTestPlaying(false);
       audio.onerror = () => setTestPlaying(false);
@@ -270,8 +270,23 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({ voiceAge
             onChange={(e) => setSelectedVoice(e.target.value)}
             className="bg-[#0D131A] border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-purple-300 font-mono focus:outline-none focus:border-purple-500 cursor-pointer"
           >
-            <option value="Nalini">Voice: Nalini (महिला)</option>
-            <option value="Deepak">Voice: Deepak (पुरुष)</option>
+            {language === 'en-IN' || language === 'en-US' ? (
+              <>
+                <option value="Kaveri">Voice: Kaveri (Female)</option>
+                <option value="Pranav">Voice: Pranav (Male)</option>
+              </>
+            ) : language === 'hi-Latn' ? (
+              <>
+                <option value="Poorvi">Voice: Poorvi (Female / Hinglish)</option>
+                <option value="Nalini">Voice: Nalini (Hindi Female)</option>
+                <option value="Deepak">Voice: Deepak (Hindi Male)</option>
+              </>
+            ) : (
+              <>
+                <option value="Nalini">Voice: Nalini (महिला / Female)</option>
+                <option value="Deepak">Voice: Deepak (पुरुष / Male)</option>
+              </>
+            )}
           </select>
 
           {/* Test Voice Sample Button */}
