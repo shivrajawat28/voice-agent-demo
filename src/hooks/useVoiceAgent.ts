@@ -25,6 +25,7 @@ import {
 import { AgentStateMachine } from '../services/AgentStateMachine';
 import { ConversationEngine } from '../services/ConversationEngine';
 import { VoiceController } from '../services/VoiceController';
+import { getApiUrl } from '../config/api';
 
 export interface UseVoiceAgentReturn {
   state: AgentState;
@@ -146,7 +147,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
 
   // Fetch backend config on mount
   useEffect(() => {
-    fetch('/api/config')
+    fetch(getApiUrl('/api/config'))
       .then((res) => (res.ok ? res.json() : null))
       .then((cfg: BackendConfig | null) => {
         if (cfg) {
@@ -196,7 +197,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
 
   const setLLMProvider = useCallback((newProvider: string) => {
     setLlmProviderState(newProvider);
-    fetch(`/api/provider/llm?provider=${newProvider}`, { method: 'POST' })
+    fetch(getApiUrl(`/api/provider/llm?provider=${newProvider}`), { method: 'POST' })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
@@ -227,7 +228,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           setTTSStatusMessage(`GNANI AI TTS: Live Neural Timbre v2.5 ready (${selectedVoice})`);
         }
       }
-      fetch(`/api/provider/tts?provider=${provider}`, { method: 'POST' }).catch(() => {});
+      fetch(getApiUrl(`/api/provider/tts?provider=${provider}`), { method: 'POST' }).catch(() => {});
     },
     [gnaniConfigured, selectedVoice]
   );
@@ -250,7 +251,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           setSTTStatusMessage('GNANI AI STT: Live WebSocket streaming (Prisma v3.0, indic-auto)');
         }
       }
-      fetch(`/api/provider/stt?provider=${provider}`, { method: 'POST' }).catch(() => {});
+      fetch(getApiUrl(`/api/provider/stt?provider=${provider}`), { method: 'POST' }).catch(() => {});
     },
     [gnaniConfigured]
   );
@@ -324,7 +325,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
       };
 
       const authoritativeLang = turnLanguage || (/[\u0900-\u097F]/.test(sentences.join(' ')) ? 'hi-IN' : language);
-      const authoritativeVoice = turnVoice || (authoritativeLang.startsWith('hi') ? 'Nalini' : selectedVoice);
+      const authoritativeVoice = turnVoice || selectedVoice || (authoritativeLang.startsWith('hi') ? 'Nalini' : 'Kaveri');
       const isIndicTurn = authoritativeLang.startsWith('hi') || authoritativeLang.includes('hinglish') || authoritativeLang.includes('hi-en');
 
       const fetchChunkTTS = async (
@@ -344,7 +345,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
             const onParentAbort = () => timeoutCtrl.abort();
             abortSignal.addEventListener('abort', onParentAbort);
 
-            const res = await fetch('/api/tts', {
+            const res = await fetch(getApiUrl('/api/tts'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -424,12 +425,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         const isLastChunk = cIdx === chunks.length - 1;
         const currentChunk = chunks[cIdx];
 
-        // Trigger single lookahead prefetch for next chunk only
-        if (cIdx + 1 < chunks.length) {
-          getOrPrefetch(cIdx + 1);
-        }
-
-        // Await audio for current chunk
+        // Await audio for current chunk first before triggering next chunk prefetch
         let preloaded: { audio: HTMLAudioElement; url: string } | null = null;
         if (ttsProvider === 'gnani' && gnaniConfigured) {
           if (cIdx === 0 && !prefetchMap.get(0)) {
@@ -442,6 +438,11 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         }
 
         if (abortSignal.aborted) break;
+
+        // Paced lookahead: Trigger next chunk prefetch while current chunk is preparing/playing
+        if (cIdx + 1 < chunks.length) {
+          getOrPrefetch(cIdx + 1);
+        }
 
         // Record inter-sentence gap metrics
         const tPlaybackCall = performance.now();
@@ -582,7 +583,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
       try {
         const chatAbortCtrl = new AbortController();
         const chatTimeout = setTimeout(() => chatAbortCtrl.abort(), 30000);
-        const response = await fetch('/api/chat', {
+        const response = await fetch(getApiUrl('/api/chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -666,10 +667,11 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         (/[\u0900-\u097F]/.test(engineResult.text) ? 'hi-IN' : language);
       const turnVoice =
         engineResult.metadata?.turn_voice ||
-        (turnLang.startsWith('hi') ? 'Nalini' : selectedVoice);
+        selectedVoice ||
+        (turnLang.startsWith('hi') ? 'Nalini' : 'Kaveri');
       playSentenceQueue(sentenceList, agentMsgId, abortController.signal, turnLang, turnVoice);
     },
-    [activeZoneId, language, playSentenceQueue]
+    [activeZoneId, language, playSentenceQueue, selectedVoice]
   );
 
   // Wire VoiceController callbacks
@@ -678,6 +680,15 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     const sm = stateMachineRef.current;
 
     vc.setCallbacks({
+      onIdleTimeout: (msg: string) => {
+        setPartialTranscript(null);
+        setSTTStatusMessage(msg || 'No speech detected. Tap the microphone to try again.');
+        if (sm.getState() === 'listening' || sm.getState() === 'finalizing') {
+          sm.cancel();
+        }
+        setPlaybackState('IDLE');
+        isProcessingTurnRef.current = false;
+      },
       onListeningStart: () => {
         setPartialTranscript(null);
         setMicPermission('granted');
@@ -876,9 +887,9 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
         : [lastAgentMsg.text];
 
     const turnLang = /[\u0900-\u097F]/.test(lastAgentMsg.text) ? 'hi-IN' : language;
-    const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+    const turnVoice = selectedVoice || (turnLang.startsWith('hi') ? 'Nalini' : 'Kaveri');
     playSentenceQueue(sentenceList, lastAgentMsg.id, abortController.signal, turnLang, turnVoice);
-  }, [playSentenceQueue, transcript]);
+  }, [playSentenceQueue, selectedVoice, transcript]);
 
   const clearTranscript = useCallback(() => {
     playbackAbortRef.current?.abort();
@@ -888,7 +899,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     setRevealedSentenceCount({});
     conversationEngineRef.current.clearHistory();
     // Clear backend conversational memory and greeting history
-    fetch('/api/chat/clear', {
+    fetch(getApiUrl('/api/chat/clear'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionIdRef.current }),
@@ -898,6 +909,13 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
   const setLanguage = useCallback((newLang: string) => {
     setLanguageState(newLang);
     voiceControllerRef.current.setLanguage(newLang);
+    if (newLang.startsWith('en')) {
+      setSelectedVoiceState((v) => (['Kaveri', 'Pranav'].includes(v) ? v : 'Kaveri'));
+    } else if (newLang === 'hi-Latn') {
+      setSelectedVoiceState('Poorvi');
+    } else if (newLang.startsWith('hi')) {
+      setSelectedVoiceState((v) => (['Nalini', 'Deepak'].includes(v) ? v : 'Nalini'));
+    }
   }, []);
 
   const vocalizeWithBrowserFallback = useCallback(() => {
@@ -920,7 +938,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
     try {
       setGyaniAudioStatus('GNANI AUDIO GENERATING');
       setTTSStatusMessage('Retrying GNANI AI TTS synthesis...');
-      const ttsRes = await fetch('/api/tts', {
+      const ttsRes = await fetch(getApiUrl('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -971,7 +989,7 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
   const approvePumpAction = useCallback(
     async (actionId: string) => {
       try {
-        const response = await fetch('/api/pump/approve', {
+        const response = await fetch(getApiUrl('/api/pump/approve'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1017,20 +1035,20 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           const abortController = new AbortController();
           playbackAbortRef.current = abortController;
           const turnLang = /[\u0900-\u097F]/.test(confirmMsg.text) ? 'hi-IN' : language;
-          const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+          const turnVoice = selectedVoice || (turnLang.startsWith('hi') ? 'Nalini' : 'Kaveri');
           playSentenceQueue(sentenceList, confirmMsgId, abortController.signal, turnLang, turnVoice);
         }
       } catch (err) {
         console.error('Error approving pump action:', err);
       }
     },
-    [language, playSentenceQueue]
+    [language, playSentenceQueue, selectedVoice]
   );
 
   const rejectPumpAction = useCallback(
     async (actionId: string) => {
       try {
-        const response = await fetch('/api/pump/reject', {
+        const response = await fetch(getApiUrl('/api/pump/reject'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1076,14 +1094,14 @@ export function useVoiceAgent(initialLanguage: string = 'en-US'): UseVoiceAgentR
           const abortController = new AbortController();
           playbackAbortRef.current = abortController;
           const turnLang = /[\u0900-\u097F]/.test(cancelMsg.text) ? 'hi-IN' : language;
-          const turnVoice = turnLang.startsWith('hi') ? 'Nalini' : selectedVoice;
+          const turnVoice = selectedVoice || (turnLang.startsWith('hi') ? 'Nalini' : 'Kaveri');
           playSentenceQueue(sentenceList, cancelMsgId, abortController.signal, turnLang, turnVoice);
         }
       } catch (err) {
         console.error('Error rejecting pump action:', err);
       }
     },
-    [language, playSentenceQueue]
+    [language, playSentenceQueue, selectedVoice]
   );
 
   return {

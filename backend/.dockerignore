@@ -1,0 +1,14 @@
+# FertoBot Backend Docker Ignore
+.env
+.env.*
+!.env.example
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+tests
+.coverage
+htmlcov
+.git
+.gitignore
+README.md

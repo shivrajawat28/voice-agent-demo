@@ -10,6 +10,7 @@
  */
 
 import { VoiceCapabilities, MicPermissionState } from '../types/voiceAgent';
+import { getWebSocketUrl } from '../config/api';
 
 interface IWindowWithSpeech extends Window {
   SpeechRecognition?: any;
@@ -24,6 +25,7 @@ export interface VoiceControllerCallbacks {
   onAudioLevel?: (level: number, waveform: Uint8Array, isSpeaking: boolean) => void;
   onSpeakingStart?: () => void;
   onSpeakingEnd?: () => void;
+  onIdleTimeout?: (message: string) => void;
   onError?: (message: string, isPermissionDenied: boolean) => void;
   onVoicesLoaded?: (voices: SpeechSynthesisVoice[], selectedVoice: SpeechSynthesisVoice | null) => void;
 }
@@ -565,9 +567,7 @@ export class VoiceController {
       const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
       this.micStream = stream;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const defaultWsUrl = `${protocol}//${window.location.host}/api/ws/stt`;
-      const targetWsUrl = options.wsUrl || defaultWsUrl;
+      const targetWsUrl = options.wsUrl || getWebSocketUrl('/api/ws/stt');
 
       const ws = new WebSocket(targetWsUrl);
       this.gnaniWebSocket = ws;
@@ -623,6 +623,11 @@ export class VoiceController {
             options.onTranscript?.(data.text, false, data.detected_language);
             this.provisionalTranscript = data.text;
             this.callbacks.onPartialTranscript?.(data.text);
+          } else if (data.type === 'idle_timeout') {
+            console.info(`[VoiceController:${activeUtterance}] STT idle session closed:`, data.message);
+            this.cleanupGnaniStreaming();
+            this.callbacks.onIdleTimeout?.(data.message || 'No speech detected. Tap the microphone to try again.');
+            this.callbacks.onListeningEnd?.();
           } else if (data.type === 'error') {
             const isAuth = data.code === 'AUTH_REQUIRED' || data.code === 401 || data.code === 403;
             options.onError?.(data.message, isAuth);
@@ -862,6 +867,10 @@ export class VoiceController {
 
     if (this.gnaniWebSocket) {
       try {
+        this.gnaniWebSocket.onopen = null;
+        this.gnaniWebSocket.onmessage = null;
+        this.gnaniWebSocket.onerror = null;
+        this.gnaniWebSocket.onclose = null;
         this.gnaniWebSocket.close();
       } catch {}
       this.gnaniWebSocket = null;

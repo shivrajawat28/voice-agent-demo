@@ -37,7 +37,10 @@ from app.tools.telemetry_tool import (
     WaterLevelTool,
     AlertHistoryTool,
 )
-from app.services.telemetry_service import telemetry_service
+from app.services.telemetry_service import (
+    telemetry_service,
+    get_telemetry_provider,
+)
 from app.services.pump_control_service import pump_control_service
 from app.utils.timezone import format_to_ist, to_ist, get_current_ist, get_tomorrow_ist
 
@@ -125,6 +128,17 @@ class LLMOrchestrator(BaseConversationProvider):
         self._session_zones.pop(key, None)
         self._session_locations.pop(key, None)
         self._session_seasons.pop(key, None)
+
+    def set_session_zone(self, session_id: str, zone_id: str) -> None:
+        """Sets the active agricultural zone for a specific conversation session."""
+        key = session_id or "default"
+        self._session_zones[key] = zone_id
+
+    def get_session_zone(self, session_id: str) -> Optional[str]:
+        """Retrieves the active agricultural zone for a specific conversation session."""
+        key = session_id or "default"
+        return self._session_zones.get(key)
+
 
     async def process_message(
         self,
@@ -244,6 +258,41 @@ class LLMOrchestrator(BaseConversationProvider):
             uncultivated_crop = "rice"
 
         self._session_zones[session_key] = resolved_zone
+
+        # -------------------------------------------------------------
+        # Safe Unknown Zone Validation
+        # -------------------------------------------------------------
+        tel_provider = get_telemetry_provider()
+        known_overview = tel_provider.get_farm_overview()
+        known_zone_ids = [z.get("zone_id") for z in known_overview.get("zones", [])]
+        is_unknown_zone = bool(
+            resolved_zone
+            and resolved_zone not in ["DEMO-ZONE-001", "DEMO-ZONE-002", "DEMO-ZONE-003", "DEMO-ZONE-004"]
+            and resolved_zone not in known_zone_ids
+            and not tel_provider.get_zone(resolved_zone)
+        )
+        is_pure_greeting = bool(
+            re.search(r"^(hello|hi|hey|greetings|namaste|ram\s*ram|good\s*(morning|afternoon|evening))\b", trimmed, re.IGNORECASE)
+            or re.search(r"^(नमस्ते|नमस्कार|प्रणाम|राम\s*राम)\s*([!.,।\?]?\s*(फर्टोबॉट|fertobot))?[\s!.,।\?]*$", trimmed, re.IGNORECASE)
+        ) and not bool(re.search(r"(नमी|moisture|पानी|water|सिंचाई|irrigation|फसल|crop|पीएच|ph|खाद|fertilizer|बैटरी|battery|तापमान|temp|कीट|रोग|मौसम|weather|npk|स्थिति|status)", trimmed, re.IGNORECASE))
+
+        if is_unknown_zone and not is_pure_greeting:
+            if is_hindi:
+                reply = f"माफ़ कीजिए, आपके खेत में ज़ोन '{resolved_zone}' पंजीकृत नहीं है। कृपया मान्य ज़ोन (जैसे Zone 1, Zone 2, Zone 3, Zone 4) चुनें।"
+            else:
+                reply = f"Sorry, zone '{resolved_zone}' is not registered on your farm. Please select a valid zone (Zone 1, Zone 2, Zone 3, or Zone 4)."
+            return ChatResponse(
+                success=True,
+                reply=reply,
+                intent="telemetry_query",
+                confidence=0.95,
+                repeatable=True,
+                sentences=[reply],
+                warnings=[f"Zone '{resolved_zone}' is not recognized in farm telemetry dataset."],
+                metadata={"zone_id": resolved_zone, "session_id": session_key, "language": language},
+            )
+
+
 
         # -------------------------------------------------------------
         # Location & Season Extraction for Persistent Context

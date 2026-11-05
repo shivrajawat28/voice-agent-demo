@@ -1,9 +1,13 @@
 """
 Environment-based Configuration for FertoBot Voice Agent Backend
 """
+import logging
 import os
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Safely attempt to load .env from backend directory, workspace root, or home directory if present
 try:
@@ -25,15 +29,72 @@ except Exception:
 HOST: str = os.getenv("HOST", "127.0.0.1")
 PORT: int = int(os.getenv("PORT", "8000"))
 
-# Allowed CORS origins for local development and staging preview
-CORS_ORIGINS: List[str] = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000",
-    ).split(",")
-    if origin.strip()
-]
+# Allowed CORS origins for local development, Render staging, and cloud frontends (Vercel)
+DEFAULT_CORS_ORIGINS = (
+    "https://fertobot-staging.onrender.com,"
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "http://localhost:5174,http://127.0.0.1:5174,"
+    "http://localhost:3000,http://127.0.0.1:3000,"
+    "http://testserver,https://testserver"
+)
+
+raw_cors_origins = os.getenv("CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+
+# Parse and normalize CORS origins:
+# 1. Split comma-separated values
+# 2. Strip whitespace and trailing slashes
+# 3. Reject unrestricted wildcard "*" when credentials are enabled for security
+# 4. Deduplicate while preserving order
+parsed_origins: List[str] = []
+for item in raw_cors_origins.split(","):
+    cleaned = item.strip().rstrip("/")
+    if not cleaned:
+        continue
+    if cleaned == "*":
+        logger.warning(
+            "CORS: Wildcard '*' detected in CORS_ORIGINS with allow_credentials=True. "
+            "Wildcards cannot be used with credentials enabled. "
+            "Ignoring '*' to preserve browser security."
+        )
+        continue
+    if cleaned not in parsed_origins:
+        parsed_origins.append(cleaned)
+
+CORS_ORIGINS: List[str] = parsed_origins
+
+# Optional regex for dynamic deployment previews (e.g. Vercel preview branches: r"^https:\/\/.*\.vercel\.app$")
+CORS_ORIGIN_REGEX: Optional[str] = os.getenv("CORS_ORIGIN_REGEX", None)
+if CORS_ORIGIN_REGEX:
+    CORS_ORIGIN_REGEX = CORS_ORIGIN_REGEX.strip() or None
+
+
+def is_allowed_origin(origin: Optional[str]) -> bool:
+    """
+    Validates whether an HTTP/WebSocket Origin header is permitted.
+    Used for securing WebSocket handshakes that bypass standard HTTP CORS middleware.
+
+    Rules:
+    - If origin is None or empty (non-browser clients, mobile apps, native CLI): permit connection.
+    - If origin matches any normalized origin in CORS_ORIGINS: permit connection.
+    - If origin matches CORS_ORIGIN_REGEX pattern: permit connection.
+    - Otherwise: reject connection.
+    """
+    if not origin:
+        return True
+
+    clean_origin = origin.strip().rstrip("/")
+    for allowed in CORS_ORIGINS:
+        if clean_origin == allowed:
+            return True
+
+    if CORS_ORIGIN_REGEX:
+        try:
+            if re.match(CORS_ORIGIN_REGEX, clean_origin):
+                return True
+        except re.error as err:
+            logger.error(f"Invalid CORS_ORIGIN_REGEX pattern: {err}")
+
+    return False
 
 # Gnani AI Configuration
 GNANI_API_KEY: str = os.getenv("GNANI_API_KEY", "").strip()

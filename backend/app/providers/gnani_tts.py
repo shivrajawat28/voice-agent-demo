@@ -33,6 +33,7 @@ class TTSMetrics:
     total_queue_wait_ms: float = 0.0
     total_provider_duration_ms: float = 0.0
     cancelled_requests: int = 0
+    last_voice_id: Optional[str] = None
 
 
 def parse_retry_after(header_val: Optional[str]) -> Optional[float]:
@@ -140,6 +141,7 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
         self._http_client = http_client
         self._persistent_client: Optional[httpx.AsyncClient] = None
         self._cache: Dict[str, Tuple[float, bytes, str]] = {}
+        self._inflight: Dict[str, asyncio.Future] = {}
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
         self._metrics = TTSMetrics()
@@ -159,6 +161,12 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
         m = asdict(self._metrics)
         m["concurrency_limit"] = self.concurrency_limit
         m["max_retries"] = self.max_retries
+        if self._metrics.successful_requests > 0:
+            m["average_latency_ms"] = round(
+                self._metrics.total_provider_duration_ms / self._metrics.successful_requests, 1
+            )
+        else:
+            m["average_latency_ms"] = 0.0
         return m
 
     def reset_metrics(self) -> None:
@@ -320,148 +328,174 @@ class GnaniTTSProvider(BaseTextToSpeechProvider):
             if now - cached_time < 300.0:  # 5 min cache
                 return cached_bytes, cached_mime
 
-        self._metrics.total_requests += 1
+        if cache_key in self._inflight:
+            return await self._inflight[cache_key]
 
-        client = self._http_client
-        if client is None:
-            if self._persistent_client is None or self._persistent_client.is_closed:
-                self._persistent_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(self.timeout_seconds, connect=15.0),
-                    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=60.0),
-                )
-            client = self._persistent_client
+        future = loop.create_future()
+        self._inflight[cache_key] = future
 
-        t_queue_enter = loop.time()
-        sem = self._get_semaphore()
-        async with sem:
-            t_queue_acquire = loop.time()
-            wait_ms = (t_queue_acquire - t_queue_enter) * 1000.0
-            self._metrics.total_queue_wait_ms += wait_ms
-            self._metrics.active_concurrency += 1
-            if self._metrics.active_concurrency > self._metrics.peak_concurrency:
-                self._metrics.peak_concurrency = self._metrics.active_concurrency
+        try:
+            self._metrics.total_requests += 1
 
-            t_req_start = loop.time()
-            try:
-                response = None
-                max_retries = self.max_retries
+            client = self._http_client
+            if client is None:
+                if self._persistent_client is None or self._persistent_client.is_closed:
+                    self._persistent_client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(self.timeout_seconds, connect=15.0),
+                        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=60.0),
+                    )
+                client = self._persistent_client
 
-                for attempt in range(max_retries + 1):
-                    try:
-                        response = await client.post(self.endpoint, json=payload, headers=headers)
-                    except Exception as net_err:
-                        if attempt < max_retries:
-                            self._metrics.retry_count += 1
-                            backoff = 0.5 * (2 ** attempt) + random.uniform(0.05, 0.25)
-                            logger.warning(
-                                f"Gnani TTS network error on attempt {attempt + 1}, retrying in {backoff:.2f}s: {config.redact_sensitive(str(net_err))}"
-                            )
-                            await asyncio.sleep(backoff)
-                            continue
-                        else:
-                            raise GnaniAPIError(f"Network error connecting to Gnani TTS: {config.redact_sensitive(str(net_err))}") from net_err
+            t_queue_enter = loop.time()
+            sem = self._get_semaphore()
+            async with sem:
+                t_queue_acquire = loop.time()
+                wait_ms = (t_queue_acquire - t_queue_enter) * 1000.0
+                self._metrics.total_queue_wait_ms += wait_ms
+                self._metrics.active_concurrency += 1
+                if self._metrics.active_concurrency > self._metrics.peak_concurrency:
+                    self._metrics.peak_concurrency = self._metrics.active_concurrency
 
-                    # Handle 429 rate limit with bounded backoff and Retry-After
-                    if response.status_code == 429:
-                        self._metrics.rate_limit_429_count += 1
-                        if attempt < max_retries:
-                            self._metrics.retry_count += 1
-                            retry_after_hdr = response.headers.get("retry-after") or response.headers.get("Retry-After")
-                            wait_sec = parse_retry_after(retry_after_hdr)
-                            if wait_sec is None:
-                                wait_sec = min(4.0, 0.5 * (2 ** attempt)) + random.uniform(0.1, 0.4)
-                            logger.warning(
-                                f"Gnani TTS rate limit 429 received (attempt {attempt + 1}/{max_retries + 1}). "
-                                f"Backing off {wait_sec:.2f}s before retry..."
-                            )
-                            await asyncio.sleep(wait_sec)
-                            continue
-                        else:
-                            self._metrics.exhausted_retries_count += 1
-                            raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
+                t_req_start = loop.time()
+                try:
+                    response = None
+                    max_retries = self.max_retries
 
-                    # Handle transient 5xx errors (502, 503, 504)
-                    if response.status_code in (502, 503, 504):
-                        self._metrics.server_error_5xx_count += 1
-                        if attempt < max_retries:
-                            self._metrics.retry_count += 1
-                            wait_sec = 0.5 * (2 ** attempt) + random.uniform(0.05, 0.25)
-                            logger.warning(
-                                f"Gnani TTS transient HTTP {response.status_code} received (attempt {attempt + 1}/{max_retries + 1}). "
-                                f"Retrying in {wait_sec:.2f}s..."
-                            )
-                            await asyncio.sleep(wait_sec)
-                            continue
-                        else:
-                            self._metrics.exhausted_retries_count += 1
-                            raise GnaniAPIError(f"Gnani TTS service unavailable (HTTP {response.status_code}).")
-
-                    break
-
-                req_duration_ms = (loop.time() - t_req_start) * 1000.0
-                self._metrics.total_provider_duration_ms += req_duration_ms
-
-                if response is None:
-                    raise GnaniAPIError("Gnani TTS returned no response.")
-
-                if response.status_code == 200:
-                    raw_content_type = response.headers.get("content-type", "")
-                    mime_type = raw_content_type.split(";")[0].strip().lower()
-
-                    # Guard against JSON error wrapped in a 200 OK
-                    if "application/json" in mime_type:
+                    for attempt in range(max_retries + 1):
                         try:
-                            err_json = response.json()
-                            err_msg = err_json.get("message") or err_json.get("detail") or "Unknown API error"
-                            raise GnaniAPIError(f"Gnani TTS returned JSON error: {config.redact_sensitive(str(err_msg))}")
-                        except ValueError:
-                            raise GnaniAPIError("Gnani TTS returned unparseable JSON instead of audio.")
+                            response = await client.post(self.endpoint, json=payload, headers=headers)
+                        except Exception as net_err:
+                            if attempt < max_retries:
+                                self._metrics.retry_count += 1
+                                backoff = 0.5 * (2 ** attempt) + random.uniform(0.05, 0.25)
+                                logger.warning(
+                                    f"Gnani TTS network error on attempt {attempt + 1}, retrying in {backoff:.2f}s: {config.redact_sensitive(str(net_err))}"
+                                )
+                                await asyncio.sleep(backoff)
+                                continue
+                            else:
+                                raise GnaniAPIError(f"Network error connecting to Gnani TTS: {config.redact_sensitive(str(net_err))}") from net_err
 
-                    # Validate payload contains audio bytes
-                    if len(response.content) < 44:
-                        raise GnaniAPIError("Gnani TTS returned empty or truncated audio payload.")
+                        # Handle 429 rate limit with bounded backoff and Retry-After
+                        if response.status_code == 429:
+                            self._metrics.rate_limit_429_count += 1
+                            if attempt < max_retries:
+                                self._metrics.retry_count += 1
+                                retry_after_hdr = response.headers.get("retry-after") or response.headers.get("Retry-After")
+                                wait_sec = parse_retry_after(retry_after_hdr)
+                                if wait_sec is None:
+                                    wait_sec = min(4.0, 0.5 * (2 ** attempt)) + random.uniform(0.1, 0.4)
+                                logger.warning(
+                                    f"Gnani TTS rate limit 429 received (attempt {attempt + 1}/{max_retries + 1}). "
+                                    f"Backing off {wait_sec:.2f}s before retry..."
+                                )
+                                await asyncio.sleep(wait_sec)
+                                continue
+                            else:
+                                self._metrics.exhausted_retries_count += 1
+                                raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
 
-                    if not mime_type or not mime_type.startswith("audio/"):
-                        mime_type = "audio/wav"
+                        # Handle transient 5xx errors (502, 503, 504)
+                        if response.status_code in (502, 503, 504):
+                            self._metrics.server_error_5xx_count += 1
+                            if attempt < max_retries:
+                                self._metrics.retry_count += 1
+                                wait_sec = 0.5 * (2 ** attempt) + random.uniform(0.05, 0.25)
+                                logger.warning(
+                                    f"Gnani TTS transient HTTP {response.status_code} received (attempt {attempt + 1}/{max_retries + 1}). "
+                                    f"Retrying in {wait_sec:.2f}s..."
+                                )
+                                await asyncio.sleep(wait_sec)
+                                continue
+                            else:
+                                self._metrics.exhausted_retries_count += 1
+                                raise GnaniAPIError(f"Gnani TTS service unavailable (HTTP {response.status_code}).")
 
-                    audio_content = response.content
-                    # Normalize unknown length markers (0xffffffff) so browsers can compute duration accurately
-                    if len(audio_content) >= 44 and audio_content[:4] == b"RIFF" and audio_content[8:12] == b"WAVE":
-                        import struct
-                        actual_data_size = len(audio_content) - 44
-                        actual_riff_size = len(audio_content) - 8
-                        audio_content = (
-                            audio_content[:4]
-                            + struct.pack("<I", actual_riff_size)
-                            + audio_content[8:40]
-                            + struct.pack("<I", actual_data_size)
-                            + audio_content[44:]
+                        break
+
+                    req_duration_ms = (loop.time() - t_req_start) * 1000.0
+                    self._metrics.total_provider_duration_ms += req_duration_ms
+
+                    if response is None:
+                        raise GnaniAPIError("Gnani TTS returned no response.")
+
+                    if response.status_code == 200:
+                        raw_content_type = response.headers.get("content-type", "")
+                        mime_type = raw_content_type.split(";")[0].strip().lower()
+
+                        # Guard against JSON error wrapped in a 200 OK
+                        if "application/json" in mime_type:
+                            try:
+                                err_json = response.json()
+                                err_msg = err_json.get("message") or err_json.get("detail") or "Unknown API error"
+                                raise GnaniAPIError(f"Gnani TTS returned JSON error: {config.redact_sensitive(str(err_msg))}")
+                            except ValueError:
+                                raise GnaniAPIError("Gnani TTS returned unparseable JSON instead of audio.")
+
+                        # Validate payload contains audio bytes
+                        if len(response.content) < 44:
+                            raise GnaniAPIError("Gnani TTS returned empty or truncated audio payload.")
+
+                        if not mime_type or not mime_type.startswith("audio/"):
+                            mime_type = "audio/wav"
+
+                        audio_content = response.content
+                        # Normalize unknown length markers (0xffffffff) so browsers can compute duration accurately
+                        if len(audio_content) >= 44 and audio_content[:4] == b"RIFF" and audio_content[8:12] == b"WAVE":
+                            import struct
+                            actual_data_size = len(audio_content) - 44
+                            actual_riff_size = len(audio_content) - 8
+                            audio_content = (
+                                audio_content[:4]
+                                + struct.pack("<I", actual_riff_size)
+                                + audio_content[8:40]
+                                + struct.pack("<I", actual_data_size)
+                                + audio_content[44:]
+                            )
+
+                        self._cache[cache_key] = (loop.time(), audio_content, mime_type)
+                        self._metrics.successful_requests += 1
+                        self._metrics.last_voice_id = resolved_voice
+                        res = (audio_content, mime_type)
+                        if not future.done():
+                            future.set_result(res)
+                        return res
+
+                    # Error handling with credential protection
+                    if response.status_code in (401, 403):
+                        raise GnaniAuthenticationError(
+                            f"Gnani API authentication failed (HTTP {response.status_code}). "
+                            "Check GNANI_API_KEY in backend/.env."
                         )
-
-                    self._cache[cache_key] = (loop.time(), audio_content, mime_type)
-                    self._metrics.successful_requests += 1
-                    return audio_content, mime_type
-
-                # Error handling with credential protection
-                if response.status_code in (401, 403):
-                    raise GnaniAuthenticationError(
-                        f"Gnani API authentication failed (HTTP {response.status_code}). "
-                        "Check GNANI_API_KEY in backend/.env."
-                    )
-                elif response.status_code == 429:
-                    raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
-                else:
-                    sanitized_error = config.redact_sensitive(response.text[:200])
-                    raise GnaniAPIError(
-                        f"Gnani TTS request failed with HTTP {response.status_code}: {sanitized_error}"
-                    )
-            except (GnaniTTSException, ValueError):
-                raise
-            except Exception as exc:
-                if client is self._persistent_client:
-                    self._persistent_client = None
-                sanitized_msg = config.redact_sensitive(str(exc))
-                logger.error(f"Gnani TTS connection error: {sanitized_msg}")
-                raise GnaniAPIError(f"Network error connecting to Gnani TTS: {sanitized_msg}") from exc
-            finally:
-                self._metrics.active_concurrency -= 1
+                    elif response.status_code == 429:
+                        raise GnaniAPIError("Gnani API rate limit exceeded (HTTP 429).")
+                    else:
+                        sanitized_error = config.redact_sensitive(response.text[:200])
+                        raise GnaniAPIError(
+                            f"Gnani TTS request failed with HTTP {response.status_code}: {sanitized_error}"
+                        )
+                except (GnaniTTSException, ValueError) as err:
+                    if not future.done():
+                        future.set_exception(err)
+                        try:
+                            future.exception()
+                        except BaseException:
+                            pass
+                    raise
+                except Exception as exc:
+                    if client is self._persistent_client:
+                        self._persistent_client = None
+                    sanitized_msg = config.redact_sensitive(str(exc))
+                    logger.error(f"Gnani TTS connection error: {sanitized_msg}")
+                    api_err = GnaniAPIError(f"Network error connecting to Gnani TTS: {sanitized_msg}")
+                    if not future.done():
+                        future.set_exception(api_err)
+                        try:
+                            future.exception()
+                        except BaseException:
+                            pass
+                    raise api_err from exc
+                finally:
+                    self._metrics.active_concurrency -= 1
+        finally:
+            self._inflight.pop(cache_key, None)

@@ -24,7 +24,12 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import CORS_ORIGINS, redact_sensitive
+from app.config import (
+    CORS_ORIGINS,
+    CORS_ORIGIN_REGEX,
+    is_allowed_origin,
+    redact_sensitive,
+)
 from app.models.conversation import (
     HealthResponse,
     ChatRequest,
@@ -57,32 +62,35 @@ app = FastAPI(
     version="0.2.1",
 )
 
-# Configure CORS for local development
+# Configure CORS for local development, Render staging, and cloud frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+# Cache commit SHA once at startup to avoid repeated disk reads during frequent health checks
+_CACHED_COMMIT_SHA: Optional[str] = os.getenv("RENDER_GIT_COMMIT", os.getenv("GIT_COMMIT", None))
+if not _CACHED_COMMIT_SHA:
+    _v_file = os.path.join(os.path.dirname(__file__), "version.json")
+    if os.path.exists(_v_file):
+        try:
+            with open(_v_file, "r") as _f:
+                _CACHED_COMMIT_SHA = json.load(_f).get("commit")
+        except Exception:
+            pass
+
+
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 @app.get("/api/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
     """Health check endpoint to verify backend availability and exact deployed commit SHA."""
-    commit_sha = os.getenv("RENDER_GIT_COMMIT", os.getenv("GIT_COMMIT", None))
-    if not commit_sha:
-        v_file = os.path.join(os.path.dirname(__file__), "version.json")
-        if os.path.exists(v_file):
-            try:
-                with open(v_file, "r") as f:
-                    v_data = json.load(f)
-                    commit_sha = v_data.get("commit")
-            except Exception:
-                pass
     return HealthResponse(
-        commit=commit_sha,
+        commit=_CACHED_COMMIT_SHA,
         environment=os.getenv("ENVIRONMENT", "production"),
     )
 
@@ -230,7 +238,12 @@ async def websocket_stt_proxy(websocket: WebSocket):
     """
     Real-time streaming Speech-to-Text WebSocket endpoint.
     Proxies browser microphone PCM audio to Gnani Prisma v3.0 over WebSocket.
+    Secured with Origin validation against allowed CORS origins.
     """
+    origin = websocket.headers.get("origin")
+    if origin and not is_allowed_origin(origin):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Origin not allowed")
+        return
     await gnani_stt_stream_handler.handle_client_websocket(websocket)
 
 
@@ -296,6 +309,7 @@ from pydantic import BaseModel as PyBaseModel
 
 class SetActiveZoneRequest(PyBaseModel):
     zone_id: str
+    session_id: Optional[str] = None
 
 
 @app.get("/api/farm/overview", tags=["Farm Telemetry"])
@@ -333,7 +347,13 @@ async def get_farm_zones_endpoint():
 @app.get("/api/farm/telemetry/latest", tags=["Farm Telemetry"])
 async def get_latest_telemetry_endpoint(zone_id: Optional[str] = Query(default=None)):
     """Returns latest simulated telemetry readings for a specific zone."""
-    return telemetry_service.get_latest_telemetry(zone_id=zone_id)
+    data = telemetry_service.get_latest_telemetry(zone_id=zone_id)
+    if zone_id and not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found in farm telemetry records.",
+        )
+    return data
 
 
 @app.get("/api/farm/telemetry/history", tags=["Farm Telemetry"])
@@ -358,7 +378,9 @@ async def get_farm_alerts_endpoint(zone_id: Optional[str] = Query(default=None))
 
 @app.post("/api/farm/active-zone", tags=["Farm Telemetry"])
 async def set_active_zone_endpoint(request: SetActiveZoneRequest):
-    """Sets the active farm zone used for context-grounded voice reasoning."""
+    """Sets the active farm zone used for context-grounded voice reasoning (optionally isolated per session)."""
+    if request.session_id:
+        orchestrator.set_session_zone(request.session_id, request.zone_id)
     success = telemetry_service.set_active_zone_id(request.zone_id)
     if not success:
         raise HTTPException(
@@ -368,6 +390,7 @@ async def set_active_zone_endpoint(request: SetActiveZoneRequest):
     return {
         "status": "ok",
         "active_zone_id": request.zone_id,
+        "session_id": request.session_id,
         "message": f"Active farm zone set to {request.zone_id}",
     }
 
@@ -395,7 +418,11 @@ async def get_canonical_soil_profile_endpoint(zone_id: Optional[str] = Query(def
     engineering units, crop benchmarks, completeness ratio, and overall health index.
     """
     zid = zone_id or telemetry_service.get_active_zone_id()
-    return telemetry_service.get_canonical_soil_profile(zone_id=zid)
+    try:
+        return telemetry_service.get_canonical_soil_profile(zone_id=zid)
+    except KeyError as ke:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ke))
+
 
 
 @app.get("/api/farm/telemetry/sodium", tags=["Farm Telemetry"])
