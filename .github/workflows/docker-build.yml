@@ -1,0 +1,130 @@
+name: Docker Multi-Stage Build & Container Smoke Test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - hotfix/render-docker-vercel-config
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build-and-test:
+    name: Build Multi-Stage Docker Image & Run Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: fertobot-ai-agronomist:${{ github.sha }}
+          build-args: |
+            RENDER_GIT_COMMIT=${{ github.sha }}
+
+      - name: Start Application Container
+        run: |
+          docker run -d \
+            --name smoke-test-app \
+            -p 8000:8000 \
+            -e SIMULATION_MODE=true \
+            -e ACTUATION_PERMITTED=false \
+            -e RENDER_GIT_COMMIT=${{ github.sha }} \
+            fertobot-ai-agronomist:${{ github.sha }}
+
+      - name: Wait for Container Health
+        run: |
+          echo "Waiting for container /health endpoint..."
+          max_attempts=30
+          attempt=0
+          until [ $attempt -ge $max_attempts ]; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Healthcheck passed with HTTP 200 on attempt $attempt"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "Attempt $attempt/$max_attempts - status $STATUS; sleeping 2s..."
+            sleep 2
+          done
+
+          if [ $attempt -ge $max_attempts ]; then
+            echo "ERROR: Timed out waiting for container health check."
+            docker logs smoke-test-app
+            exit 1
+          fi
+
+      - name: Smoke Test Health Endpoint
+        run: |
+          echo "Testing GET /health..."
+          HEALTH_JSON=$(curl -sS http://localhost:8000/health)
+          echo "Response: $HEALTH_JSON"
+          echo "$HEALTH_JSON" | grep -q '"status":"ok"' || { echo "ERROR: Status not ok"; exit 1; }
+
+      - name: Smoke Test Root SPA Serving
+        run: |
+          echo "Testing GET / for Standalone AI Agronomist HTML..."
+          ROOT_HTML=$(curl -sS http://localhost:8000/)
+          echo "$ROOT_HTML" | grep -q '<title>FertoBot Voice Agent Demo</title>' || {
+            echo "ERROR: Missing expected title in HTML"
+            echo "$ROOT_HTML"
+            exit 1
+          }
+          echo "$ROOT_HTML" | grep -q 'id="root"' || {
+            echo "ERROR: Missing #root div in HTML"
+            exit 1
+          }
+          echo "Root HTML serving verified successfully."
+
+      - name: Smoke Test Static JS and CSS Assets
+        run: |
+          echo "Extracting generated static asset paths from /..."
+          ROOT_HTML=$(curl -sS http://localhost:8000/)
+          JS_ASSET=$(echo "$ROOT_HTML" | grep -o '/assets/[^"]*\.js' | head -n 1)
+          CSS_ASSET=$(echo "$ROOT_HTML" | grep -o '/assets/[^"]*\.css' | head -n 1)
+
+          if [ -z "$JS_ASSET" ] || [ -z "$CSS_ASSET" ]; then
+            echo "ERROR: Failed to extract JS or CSS asset paths from index.html"
+            exit 1
+          fi
+
+          echo "Checking JS Asset: $JS_ASSET"
+          JS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000$JS_ASSET")
+          if [ "$JS_STATUS" != "200" ]; then
+            echo "ERROR: JS asset returned HTTP $JS_STATUS"
+            exit 1
+          fi
+
+          echo "Checking CSS Asset: $CSS_ASSET"
+          CSS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000$CSS_ASSET")
+          if [ "$CSS_STATUS" != "200" ]; then
+            echo "ERROR: CSS asset returned HTTP $CSS_STATUS"
+            exit 1
+          fi
+
+          echo "Static assets verified successfully with HTTP 200."
+
+      - name: Inspect Container Logs on Failure
+        if: failure()
+        run: |
+          echo "Container logs:"
+          docker logs smoke-test-app
+
+      - name: Cleanup Container
+        if: always()
+        run: |
+          echo "Stopping and removing container smoke-test-app..."
+          docker stop smoke-test-app || true
+          docker rm smoke-test-app || true

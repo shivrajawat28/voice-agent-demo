@@ -11,7 +11,7 @@ WORKDIR /build
 COPY package*.json ./
 RUN npm ci
 
-COPY tsconfig*.json vite.config.ts tailwind.config.js postcss.config.js index.html ./
+COPY tsconfig*.json vite.config.ts tailwind.config.js postcss.config.js index.html vercel.json* ./
 COPY src/ ./src/
 COPY public/ ./public/
 
