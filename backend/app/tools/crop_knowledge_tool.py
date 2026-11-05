@@ -21,15 +21,15 @@ CROP_THRESHOLDS = {
         "soil_type_preference": "Well-drained fertile loam or clay loam",
         "npk_requirement_ratio": "120:60:40 (N:P2O5:K2O kg/ha)",
         "critical_growth_stages": [
-            "CRI (Crown Root Initiation at 20-25 days after sowing - First Irrigation)",
+            "CRI (Crown Root Initiation, typically around 20-25 days after sowing depending on depth and temperature - First Irrigation)",
             "Tillering (40-45 days)",
             "Jointing (60-65 days)",
             "Flowering / Heading (80-85 days)",
             "Milking / Grain Filling (100-105 days)",
             "Dough stage (115-120 days)",
         ],
-        "irrigation_guideline": "5 to 6 irrigations; CRI stage (20-25 days after sowing) is the absolute first and most critical irrigation where moisture stress causes severe irreversible root stunting and yield loss.",
-        "first_irrigation_timing": "Crown Root Initiation (CRI / ताज मूल अवस्था), 20-25 days after sowing (बुवाई के 20-25 दिन बाद). Moisture stress at this stage leads to 30-40% yield drop.",
+        "irrigation_guideline": "5 to 6 irrigations; Crown Root Initiation (CRI) stage (typically around 20-25 days after sowing under normal temperatures and depth) is the critical first irrigation where drought stress may severely stunt crown root establishment and risk significant yield reduction.",
+        "first_irrigation_timing": "Crown Root Initiation (CRI / ताज मूल अवस्था), typically around 20-25 days after sowing (DAS), qualified by ambient temperature, sowing depth, variety, and soil moisture. Drought stress during crown root establishment risks potential yield loss of up to 30-40% in literature.",
     },
     "cotton": {
         "crop_name": "Cotton (कपास)",
@@ -119,8 +119,8 @@ CROP_THRESHOLDS = {
             "Tasseling (मंजर निकलना, 45-50 days)",
             "Silking / Cob filling (सिल्क निकलना और भुट्टे में दाने भरना, 60-70 days)",
         ],
-        "irrigation_guideline": "Optimal moisture is 50-75% (minimum 45%). At 40% moisture, crop experiences water stress and irrigation is required. Critical at knee-high, tasseling, and silking; strictly avoid water stagnation/waterlogging.",
-        "moisture_evaluation_40pct": "At 40% soil moisture, maize is below its critical minimum threshold of 45%. Irrigation is recommended immediately to prevent yield loss, especially during flowering/silking, while ensuring proper furrow drainage.",
+        "irrigation_guideline": "Irrigation depends on soil texture, root-zone depth, sensor calibration, and growth stage. A 40% reading alone does not dictate irrigation without field context. Moisture deficits are most harmful during flowering (tasseling/silking); ensure proper furrow drainage as maize is intolerant of waterlogging.",
+        "moisture_evaluation_40pct": "A 40% moisture reading represents farmer-provided input and should be interpreted alongside soil texture and crop stage. Light soils may require irrigation near this level, while heavy clays retain moisture differently. Critical sensitivity occurs at tasseling and silking.",
     },
     "rice": {
         "crop_name": "Rice / Paddy (धान)",
@@ -279,7 +279,7 @@ AGRONOMIC_PRACTICES = {
     },
     "soil_ph_improvement": {
         "principles": [
-            "Neutral/Optimal soils (pH 6.0 - 7.5): Ideal bioavailability for all macro and micronutrients. Chemical amendments (lime or gypsum) are NOT required. Maintain microbial buffer capacity by incorporating 10-12 tonnes/ha well-decomposed Farm Yard Manure (FYM) or vermicompost.",
+            "Neutral/Optimal soils (pH 6.0 - 7.5): Ideal bioavailability for all macro and micronutrients. Chemical amendments (lime or gypsum) are NOT required. Support microbial buffering and soil structure through routine organic matter additions (well-decomposed FYM or compost); appropriate application rates depend on soil organic carbon, crop type, and soil texture context from a Soil Health Card.",
             "Acidic soils (pH < 6.0): High acidity causes phosphorus fixation and aluminum toxicity. Apply agricultural lime (calcium carbonate, CaCO3) based on lab buffer pH test.",
             "Alkaline/Sodic soils (pH > 7.5 - 8.5): High sodium or carbonates impede nutrient uptake. Apply agricultural gypsum (calcium sulfate, CaSO4.2H2O) to displace sodium, accompanied by organic compost and green manuring (Dhaincha).",
             "General rule: Never apply chemical amendments blindly without a certified soil testing laboratory report.",

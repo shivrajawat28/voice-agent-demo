@@ -77,13 +77,15 @@ class MockLLMProvider(BaseLLMProvider):
                 return (
                     "मिट्टी का वर्तमान pH मान 6.8 है जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
                     "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
-                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना बनाए रखने के लिए प्रति हेक्टेयर 10 से 12 टन गोबर की खाद या वर्मीकम्पोस्ट मिलाएं। "
+                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                    "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड की जांच करें। "
                     "रासायनिक सुधारकों (जैसे चूना या जिप्सम) का प्रयोग केवल लैब टेस्ट में गंभीर अम्लता या क्षारीयता पाए जाने पर ही किया जाता है।"
                 )
             return (
                 "Current soil pH is 6.8, which is in the optimal near-neutral range for crops. "
-                "Chemical soil amendments such as lime or gypsum are not required at this pH. "
-                "To maintain soil fertility and buffering capacity, incorporate 10 to 12 tonnes/ha of organic compost. "
+                "Chemical soil amendments such as lime or gypsum are not required at this pH level. "
+                "To maintain soil fertility and buffering capacity, incorporating well-decomposed organic manure or compost is recommended as general guidance. "
+                "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop requirements from a certified Soil Health Card. "
                 "Chemical amendments are only applied when verified by laboratory soil testing for acidic or alkaline conditions."
             )
 
@@ -104,26 +106,32 @@ class MockLLMProvider(BaseLLMProvider):
             if is_hindi:
                 return (
                     "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन गेहूं, कपास, टमाटर और सरसों के हैं)। "
-                    "कृषि विज्ञान के अनुसार, मक्का में 40% नमी पर सिंचाई अवश्य करनी चाहिए क्योंकि मक्का के लिए इष्टतम नमी 50% से 75% होती है और 40% नमी पानी की कमी दर्शाती है। "
-                    "विशेष रूप से घुटने की ऊंचाई, मंजर निकलने (tasseling), या दाने भरने (silking) के समय नमी बनाए रखें, लेकिन खेत में जलभराव बिल्कुल न होने दें।"
+                    "आपके द्वारा बताई गई 40% नमी किसान-प्रदत्त रीडिंग है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
+                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट) और फसल की अवस्था पर निर्भर करता है। "
+                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) के समय नमी की कमी सर्वाधिक नुकसान पहुंचाती है। "
+                    "खेत में जलभराव बिल्कुल न होने दें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान अवस्था बताएं।"
                 )
             return (
                 "Maize is not registered in any monitored sensor zone on your farm (farm zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
-                "Agronomically, irrigation is recommended for maize at 40% soil moisture, as optimal moisture is 50% to 75% and 40% represents water deficit stress. "
-                "Irrigation is critical during knee-high, tasseling, or silking stages, while ensuring proper furrow drainage."
+                "The 40% soil moisture cited represents farmer-provided input rather than calibrated on-farm telemetry. "
+                "A moisture percentage alone cannot dictate irrigation without establishing soil texture, root-zone depth, and growth stage. "
+                "Moisture deficits are most critical during flowering stages—tasseling and silking—while ensuring proper furrow drainage as maize cannot tolerate standing water. "
+                "Please share your soil texture and crop stage for a specific recommendation."
             )
 
         if is_wheat_first_irrigation:
             if is_hindi:
                 return (
-                    "गेहूं में पहली सिंचाई बुवाई के 20 से 25 दिन बाद 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर करनी चाहिए। "
-                    "यह गेहूं की सबसे महत्वपूर्ण क्रांतिक अवस्था है, जिस समय क्राउन जड़ें निकलती हैं और पानी की कमी से 30 से 40 प्रतिशत तक पैदावार घट सकती है। "
-                    "वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है; यदि बुवाई को 20-25 दिन हो चुके हैं, तो हल्की सिंचाई करें।"
+                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
+                    "हालांकि, यह समय बुवाई की गहराई और तापमान के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
+                    "फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है। "
+                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें।"
                 )
             return (
-                "In wheat, the first irrigation must be applied at the Crown Root Initiation (CRI) stage, exactly 20 to 25 days after sowing (DAS). "
-                "This is the most critical moisture-sensitive stage where water stress can cause 30% to 40% yield loss. "
-                "Current soil moisture in your Wheat Field (Zone 1) is 48.2%; if 20-25 days have elapsed since sowing, apply a light irrigation."
+                "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
+                "However, exact timing varies with sowing depth, ambient temperature, and variety. Severe moisture deficit during crown root establishment risks potential yield penalties of up to 30% to 40% in literature. "
+                "While FertoBot sensors monitor soil moisture (currently 48.2% in Zone 1 Wheat), they do not track calendar sowing dates. "
+                "Inspect crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation."
             )
 
         if is_spray:

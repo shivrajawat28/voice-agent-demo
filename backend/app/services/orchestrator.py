@@ -346,17 +346,19 @@ def _validate_response_gate(
             warnings.append("Gated response: Corrected crop substitution from Wheat to Maize.")
             if is_hindi:
                 clean_reply = (
-                    "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन गेहूं, कपास, टमाटर और सरसों के हैं)। "
-                    "कृषि विज्ञान के अनुसार, मक्का में 40% नमी पर सिंचाई अवश्य करनी चाहिए। मक्का के लिए इष्टतम मिट्टी की नमी 50% से 75% होती है (न्यूनतम सीमा 45% है), "
-                    "अतः 40% नमी फसल में पानी की कमी (water stress) दर्शाती है। विशेष रूप से घुटने की ऊंचाई (knee-high), मंजर निकलने (tasseling), "
-                    "या दाने भरने (silking) के समय नमी बनाए रखें। सिंचाई हल्की करें और खेत में जलभराव बिल्कुल न होने दें।"
+                    "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन केवल गेहूं, कपास, टमाटर और सरसों के हैं)। "
+                    "आपके द्वारा बताई गई 40% नमी किसान-प्रदत्त रीडिंग है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
+                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट) और फसल की अवस्था पर निर्भर करता है। "
+                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) के समय नमी की कमी सर्वाधिक नुकसान पहुंचाती है। "
+                    "खेत में जलभराव बिल्कुल न होने दें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान अवस्था बताएं।"
                 )
             else:
                 clean_reply = (
                     "Maize is not registered in any monitored sensor zone on your farm (registered zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
-                    "Agronomically, at 40% soil moisture, irrigation is definitely recommended for maize. The optimal root zone moisture for maize is 50% to 75% (critical minimum is 45%), "
-                    "meaning 40% moisture indicates water deficit stress. Irrigation is critical especially during knee-high, tasseling, or silking/grain filling stages. "
-                    "Ensure adequate furrow drainage as maize cannot tolerate standing water."
+                    "The 40% soil moisture cited represents farmer-provided input rather than calibrated on-farm telemetry. "
+                    "A moisture percentage alone cannot dictate irrigation without establishing soil texture, root-zone depth, and growth stage. "
+                    "Moisture deficits are most critical during flowering stages—tasseling and silking—while ensuring proper furrow drainage as maize cannot tolerate standing water. "
+                    "Please share your soil texture and crop stage for a specific recommendation."
                 )
 
     # 2. Fertilizer Safety Gate
@@ -382,23 +384,43 @@ def _validate_response_gate(
 
     # 3. Soil Improvement Gate
     if intent == "soil_improvement":
-        missing_improvement = not any(w in clean_reply for w in ["सुधार", "गोबर", "जैविक", "उपाय", "amendment", "compost", "manure", "gypsum", "जिप्सम", "lime", "चूना"])
+        missing_improvement = not any(w in clean_reply for w in ["सुधार", "गोबर", "जैविक", "उपाय", "amendment", "compost", "manure", "gypsum", "जिप्सम", "lime", "चूना", "उपलब्ध नहीं", "unavailable"])
         if missing_improvement:
             warnings.append("Gated response: Enriched soil pH response with required soil improvement measures.")
-            if is_hindi:
-                clean_reply = (
-                    "मिट्टी का वर्तमान pH मान 6.8 है, जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
-                    "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
-                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना बनाए रखने के लिए प्रति हेक्टेयर 10 से 12 टन अच्छी सड़ी गोबर की खाद (FYM) या वर्मीकम्पोस्ट मिलाएं। "
-                    "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है।"
-                )
+            zone_tel = telemetry_service.get_latest_telemetry(resolved_zone) if resolved_zone else {}
+            zone_ph = zone_tel.get("ph")
+            if zone_ph is None or zone_tel.get("ph_uncalibrated") or zone_tel.get("ph_is_stale"):
+                if is_hindi:
+                    clean_reply = (
+                        "वर्तमान में इस ज़ोन के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है। "
+                        "बिना अधिकृत लैब टेस्ट के किसी रासायनिक सुधारक (जैसे कृषि चूना या जिप्सम) का उपयोग न करें। "
+                        "मिट्टी की उर्वरता और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना सामान्य सलाह है, "
+                        "जिसकी सटीक मात्रा मृदा स्वास्थ्य कार्ड (Soil Health Card) से जांचें।"
+                    )
+                else:
+                    clean_reply = (
+                        "A valid soil pH reading is currently unavailable for this zone. "
+                        "Chemical amendments such as lime or gypsum must never be applied without a certified laboratory soil test. "
+                        "Incorporating well-decomposed organic manure or compost is recommended as general guidance for soil structure, "
+                        "with precise rates guided by a certified Soil Health Card."
+                    )
             else:
-                clean_reply = (
-                    "The current soil pH is 6.8, which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
-                    "At this pH level, chemical soil amendments like lime or gypsum are not required. "
-                    "To maintain soil health and buffering capacity, incorporate 10 to 12 tonnes/ha of well-decomposed organic manure or vermicompost. "
-                    "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5)."
-                )
+                if is_hindi:
+                    clean_reply = (
+                        f"मिट्टी का वर्तमान मापा गया pH मान {zone_ph} है, जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
+                        "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
+                        "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                        "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड की जांच करें। "
+                        "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है।"
+                    )
+                else:
+                    clean_reply = (
+                        f"The current measured soil pH is {zone_ph}, which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
+                        "At this pH level, chemical soil amendments like lime or gypsum are not required. "
+                        "To maintain soil health, biological carbon, and buffering capacity, incorporating well-decomposed organic manure or compost is advised as general agronomic guidance. "
+                        "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop needs from a certified Soil Health Card. "
+                        "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5)."
+                    )
 
     # 4. Wheat First Irrigation Gate
     if intent == "irrigation_timing" and (query_crop == "wheat" or "गेहूं" in clean_reply or "wheat" in clean_reply.lower()):
@@ -408,15 +430,17 @@ def _validate_response_gate(
             warnings.append("Gated response: Enriched wheat irrigation with critical Crown Root Initiation (CRI) timing.")
             if is_hindi:
                 clean_reply = (
-                    "गेहूं में पहली सिंचाई बुवाई के 20 से 25 दिन बाद 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर करनी चाहिए। "
-                    "यह गेहूं की सबसे महत्वपूर्ण क्रांतिक अवस्था है, जिस समय क्राउन जड़ें निकलती हैं और पानी की कमी से 30 से 40 प्रतिशत तक पैदावार घट सकती है। "
-                    "वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है; यदि बुवाई को 20-25 दिन हो चुके हैं, तो हल्की सिंचाई करें।"
+                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
+                    "हालांकि, यह समय बुवाई की गहराई और तापमान के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
+                    "फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है। "
+                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें।"
                 )
             else:
                 clean_reply = (
-                    "In wheat, the first irrigation must be applied at the Crown Root Initiation (CRI) stage, exactly 20 to 25 days after sowing (DAS). "
-                    "This is the single most critical moisture-sensitive growth stage; drought stress during CRI permanently stunts crown root development and causes a 30% to 40% yield penalty. "
-                    "Currently, soil moisture in your Wheat Field (Zone 1) is 48.2%. If 20-25 days have elapsed since sowing, a light to moderate irrigation should be applied."
+                    "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
+                    "However, exact timing varies with sowing depth, ambient temperature, and variety. Severe moisture deficit during crown root establishment risks potential yield penalties of up to 30% to 40% in literature. "
+                    "While FertoBot sensors monitor soil moisture (currently 48.2% in Zone 1 Wheat), they do not track calendar sowing dates. "
+                    "Inspect crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation."
                 )
 
     # 5. Deduplication and clean punctuation
@@ -1359,25 +1383,105 @@ class LLMOrchestrator(BaseConversationProvider):
         if is_soil_improvement_query:
             target_zone = resolved_zone or "DEMO-ZONE-001"
             tel_res = await self._tools["latest_telemetry"].execute(zone_id=target_zone)
-            ph = tel_res.get("ph", 6.8)
+            if tel_res.get("status") == "error":
+                reply = (
+                    f"ज़ोन '{target_zone}' इस फार्म में पंजीकृत नहीं है। कृपया मान्य ज़ोन चुनें।"
+                    if is_hindi
+                    else f"Zone '{target_zone}' is not registered on this farm. Please select a valid zone."
+                )
+                return self._build_response(
+                    reply=reply,
+                    intent="soil_improvement",
+                    confidence=1.0,
+                    repeatable=True,
+                    provider_status="fast_path",
+                    sources=["Farm Zone Registry"],
+                    metadata={"zone_id": target_zone, "status": "unknown_zone"},
+                )
+
+            ph = tel_res.get("ph")
+            ph_uncal = tel_res.get("ph_uncalibrated", False)
+            ph_stale = tel_res.get("ph_is_stale", False)
             temp = tel_res.get("soil_temperature_c", 22.4)
             zone_name = tel_res.get("zone_name", target_zone)
             ts = format_to_ist(tel_res.get("reading_timestamp_iso"))
 
-            if is_hindi:
-                reply = (
-                    f"{zone_name} की मिट्टी का वर्तमान pH मान {ph} है (तापमान: {temp}°C, समय: {ts}), जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
-                    "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
-                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए प्रति हेक्टेयर 10 से 12 टन अच्छी सड़ी गोबर की खाद (FYM) या वर्मीकम्पोस्ट मिलाएं। "
-                    "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है। (सिमुलेटेड टेलीमेट्री सलाह)"
-                )
+            # Audit canonical soil profile for ph metadata if present
+            canonical = tel_res.get("canonical_soil_profile", {})
+            ph_param = canonical.get("parameters", {}).get("soil_ph", {}) if isinstance(canonical, dict) else {}
+            if ph_param:
+                if ph_param.get("calibration_status") == "UNCALIBRATED":
+                    ph_uncal = True
+                if ph_param.get("quality_status") == "STALE":
+                    ph_stale = True
+                if ph_param.get("quality_status") in ["UNAVAILABLE", "OUT_OF_RANGE"]:
+                    ph = None
+
+            if ph is None or ph_uncal or ph_stale or ph < 0.0 or ph > 14.0:
+                if is_hindi:
+                    if ph_uncal:
+                        ph_note = f"{zone_name} के लिए मिट्टी का pH सेंसर वर्तमान में असंशोधित (Uncalibrated) है।"
+                    elif ph_stale:
+                        ph_note = f"{zone_name} के लिए मिट्टी का pH डेटा पुराना (Stale) है।"
+                    else:
+                        ph_note = f"वर्तमान में {zone_name} के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है।"
+                    reply = (
+                        f"{ph_note} बिना अधिकृत प्रयोगशाला परीक्षण के किसी रासायनिक सुधारक (जैसे कृषि चूना या जिप्सम) का उपयोग न करें। "
+                        "मिट्टी की भौतिक संरचना और जैविक गतिविधि को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                        "हालांकि, इसकी सही मात्रा आपके खेत के जैविक कार्बन (Soil Organic Carbon) और फसल के प्रकार पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड (Soil Health Card) की सिफारिशें देखें। (सिमुलेटेड टेलीमेट्री सलाह)"
+                    )
+                else:
+                    if ph_uncal:
+                        ph_note = f"Soil pH sensor for {zone_name} is currently uncalibrated."
+                    elif ph_stale:
+                        ph_note = f"Soil pH data for {zone_name} is stale."
+                    else:
+                        ph_note = f"A valid soil pH reading is currently unavailable for {zone_name}."
+                    reply = (
+                        f"{ph_note} Chemical soil amendments such as agricultural lime or gypsum must never be applied without a certified soil test report. "
+                        "To maintain soil structure and biological activity, regular incorporation of well-decomposed organic manure or compost is recommended as general guidance. "
+                        "Specific application rates depend on soil organic carbon percentage, soil texture, and crop requirements documented in your Soil Health Card. (Simulated Telemetry Advisory)"
+                    )
             else:
-                reply = (
-                    f"In {zone_name}, current soil pH is {ph} (Soil Temp: {temp}°C as of {ts}), which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
-                    "At this pH level, chemical soil amendments like lime or gypsum are not required. "
-                    "To maintain soil health, biological carbon, and buffering capacity, incorporate 10 to 12 tonnes/ha of well-decomposed organic manure or vermicompost. "
-                    "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5). (Simulated Telemetry Advisory)"
-                )
+                if 6.0 <= ph <= 7.5:
+                    if is_hindi:
+                        reply = (
+                            f"{zone_name} की मिट्टी का वर्तमान pH मान {ph} है (तापमान: {temp}°C, समय: {ts}), जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
+                            "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
+                            "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                            "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड की जांच करें। "
+                            "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है। (सिमुलेटेड टेलीमेट्री सलाह)"
+                        )
+                    else:
+                        reply = (
+                            f"In {zone_name}, current soil pH is {ph} (Soil Temp: {temp}°C as of {ts}), which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
+                            "At this pH level, chemical soil amendments like lime or gypsum are not required. "
+                            "To maintain soil health, biological carbon, and buffering capacity, incorporating well-decomposed organic manure or compost is advised as general agronomic guidance. "
+                            "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop needs from a certified Soil Health Card. "
+                            "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5). (Simulated Telemetry Advisory)"
+                        )
+                elif ph < 6.0:
+                    if is_hindi:
+                        reply = (
+                            f"{zone_name} की मिट्टी का वर्तमान pH मान {ph} है, जो अम्लीय स्तर दर्शाता है। अम्लीय मिट्टी में फॉस्फोरस का स्थिरीकरण बढ़ जाता है। "
+                            "सुधार के लिए कृषि चूना की आवश्यकता हो सकती है, लेकिन सटीक मात्रा मृदा परीक्षण लैब से बफर pH जांच के बाद ही तय करें। (सिमुलेटेड टेलीमेट्री सलाह)"
+                        )
+                    else:
+                        reply = (
+                            f"In {zone_name}, current soil pH is {ph}, indicating acidic conditions. "
+                            "Phosphorus availability is restricted; agricultural lime may be required based on certified lab buffer-pH testing. (Simulated Telemetry Advisory)"
+                        )
+                else:
+                    if is_hindi:
+                        reply = (
+                            f"{zone_name} की मिट्टी का वर्तमान pH मान {ph} है, जो क्षारीय स्तर दर्शाता है। "
+                            "सुधार के लिए कृषि जिप्सम और ढैंचा की हरी खाद उपयोगी होती है, लेकिन जिप्सम की मात्रा लैब से विनिमयशील सोडियम प्रतिशत (ESP) जांच के आधार पर ही डालें। (सिमुलेटेड टेलीमेट्री सलाह)"
+                        )
+                    else:
+                        reply = (
+                            f"In {zone_name}, current soil pH is {ph}, indicating alkaline conditions. "
+                            "Gypsum application and green manuring assist reclamation, but gypsum dosage must follow laboratory ESP test results. (Simulated Telemetry Advisory)"
+                        )
 
             self._last_responses[session_key] = reply
             trace.append(ExecutionTraceStep(
@@ -1401,7 +1505,7 @@ class LLMOrchestrator(BaseConversationProvider):
 
         # -------------------------------------------------------------
         # Phase 34: Wheat First Irrigation Timing (CRI Stage Focused Guidance)
-        # Directly addresses Crown Root Initiation (20-25 days after sowing).
+        # Directly addresses Crown Root Initiation (typically 20-25 days after sowing).
         # Eliminates irrelevant weather lectures, historical trend dumps, and chemical spray alerts.
         # -------------------------------------------------------------
         is_first_irrigation_query = (
@@ -1419,15 +1523,17 @@ class LLMOrchestrator(BaseConversationProvider):
 
             if is_hindi:
                 reply = (
-                    "गेहूं में पहली सिंचाई बुवाई के 20 से 25 दिन बाद 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर करनी चाहिए। "
-                    "यह गेहूं की सबसे महत्वपूर्ण क्रांतिक अवस्था है, जिस समय क्राउन जड़ें निकलती हैं और पानी की कमी से 30 से 40 प्रतिशत तक पैदावार घट सकती है। "
-                    f"वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी {moist}% है (समय: {ts}); यदि बुवाई को 20-25 दिन हो चुके हैं, तो हल्की सिंचाई करें। (सिमुलेटेड टेलीमेट्री सलाह)"
+                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
+                    "हालांकि, यह समय बुवाई की गहराई और तापमान के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
+                    f"फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी {moist}% है (समय: {ts})। "
+                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें। (सिमुलेटेड टेलीमेट्री सलाह)"
                 )
             else:
                 reply = (
-                    "In wheat, the first irrigation must be applied at the Crown Root Initiation (CRI) stage, exactly 20 to 25 days after sowing (DAS). "
-                    "This is the single most critical moisture-sensitive growth stage; drought stress during CRI permanently stunts crown root development and causes a 30% to 40% yield penalty. "
-                    f"Currently, soil moisture in your Wheat Field (Zone 1) is {moist}% as of {ts}. If 20-25 days have elapsed since sowing, a light to moderate irrigation should be applied. (Simulated Telemetry Advisory)"
+                    "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
+                    "However, exact timing varies with sowing depth, ambient temperature, and variety. Severe moisture deficit during crown root establishment risks potential yield penalties of up to 30% to 40% in literature. "
+                    f"While FertoBot sensors monitor soil moisture (currently {moist}% in Zone 1 Wheat as of {ts}), they do not track calendar sowing dates. "
+                    "Inspect crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation. (Simulated Telemetry Advisory)"
                 )
 
             self._last_responses[session_key] = reply
@@ -1463,17 +1569,19 @@ class LLMOrchestrator(BaseConversationProvider):
             eval_m = query_specified_moisture if query_specified_moisture is not None else 40.0
             if is_hindi:
                 reply = (
-                    "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन गेहूं, कपास, टमाटर और सरसों के हैं)। "
-                    f"कृषि विज्ञान के अनुसार, मक्का में {eval_m:.0f}% नमी पर सिंचाई अवश्य करनी चाहिए। मक्का के लिए इष्टतम मिट्टी की नमी 50% से 75% होती है (न्यूनतम सीमा 45% है), "
-                    f"अतः {eval_m:.0f}% नमी फसल में पानी की कमी (water stress) दर्शाती है। विशेष रूप से घुटने की ऊंचाई (knee-high), मंजर निकलने (tasseling), "
-                    "या दाने भरने (silking) के समय नमी बनाए रखें। सिंचाई हल्की करें और खेत में जलभराव बिल्कुल न होने दें।"
+                    "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन केवल गेहूं, कपास, टमाटर और सरसों के हैं)। "
+                    f"आपके द्वारा बताई गई {eval_m:.0f}% नमी किसान-प्रदत्त रीडिंग है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
+                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट) और फसल की अवस्था पर निर्भर करता है। "
+                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) के समय नमी की कमी सर्वाधिक नुकसान पहुंचाती है। "
+                    "खेत में जलभराव बिल्कुल न होने दें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान अवस्था बताएं।"
                 )
             else:
                 reply = (
                     "Maize is not registered in any monitored sensor zone on your farm (registered zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
-                    f"Agronomically, at {eval_m:.0f}% soil moisture, irrigation is definitely recommended for maize. The optimal root zone moisture for maize is 50% to 75% (critical minimum is 45%), "
-                    f"meaning {eval_m:.0f}% moisture indicates water deficit stress. Irrigation is critical especially during knee-high, tasseling, or silking/grain filling stages. "
-                    "Ensure adequate furrow drainage as maize cannot tolerate standing water."
+                    f"The {eval_m:.0f}% soil moisture cited represents farmer-provided input rather than calibrated on-farm telemetry. "
+                    "A moisture percentage alone cannot dictate irrigation without establishing soil texture, root-zone depth, and growth stage. "
+                    "Moisture deficits are most critical during flowering stages—tasseling and silking—while ensuring proper furrow drainage as maize cannot tolerate standing water. "
+                    "Please share your soil texture and crop stage for a specific recommendation."
                 )
 
             self._last_responses[session_key] = reply
@@ -2982,7 +3090,7 @@ class LLMOrchestrator(BaseConversationProvider):
                 "CLARIFICATION & CROP ISOLATION POLICY:\n"
                 "- Query Crop: Maize (मक्का).\n"
                 "- CRITICAL ISOLATION: Maize is NOT on any sensor zone on this farm. NEVER quote Zone 1 or Wheat readings (e.g. 48.2% moisture) for Maize!\n"
-                "- Disclose that Maize is not monitored on farm probes, and evaluate Maize agronomically against standard thresholds (e.g. 50-75% optimal, 45% minimum threshold)."
+                "- Disclose that Maize is not monitored on farm probes and that moisture figures mentioned are farmer-provided. Explain that moisture percentage alone cannot dictate irrigation without soil texture and growth stage context; highlight critical stages (tasseling, silking) and furrow drainage, and request soil/stage context."
             )
         elif query_crop:
             zone_target_desc = f"{resolved_zone} ({query_crop})"
@@ -3004,8 +3112,8 @@ class LLMOrchestrator(BaseConversationProvider):
         agronomic_safety_rule = (
             "AGRONOMIC & SENSOR ACCURACY POLICY (STRICT SAFETY):\n"
             "- Fertilizer Dosage Safety: NEVER provide universal fixed quantities (such as 50 kg urea + 50 kg DAP per acre) as definitive fact without establishing crop growth stage, acreage, and laboratory soil-test results. Always explain that dosage depends on basal DAP vs top-dress split urea and soil test. If crop, growth stage, or soil-test is missing, set needs_clarification=True and ask for the missing details in clarification_prompt.\n"
-            "- Soil Improvement & pH: When asked about soil pH and improvement/remedy (सुधार उपाय), DO NOT only give the current pH number. You MUST state whether improvement is needed (pH 6.8 is optimal/neutral, so chemical lime/gypsum is NOT needed; recommend organic manure/FYM instead) and explain when lime (acidic) or gypsum (alkaline) would be used based on certified soil tests.\n"
-            "- Irrigation Timing: When asked when to irrigate wheat for the first time (पहला पानी / पहली सिंचाई), directly state Crown Root Initiation (CRI / ताज मूल अवस्था, 20-25 days after sowing). Reference current moisture if known, but DO NOT provide chemical spray warnings or 7-day weather trend dumps unless spray or weather was asked.\n"
+            "- Soil Improvement & pH: When asked about soil pH and improvement/remedy (सुधार उपाय), DO NOT default missing pH to 6.8. If pH is unavailable, state that no valid reading is currently available and withhold lime/gypsum entirely. If pH is neutral (6.0-7.5), explain that chemical amendments (lime/gypsum) are not needed; recommend organic manure/compost as general guidance and explain that specific dosage depends on soil organic carbon and crop context from a Soil Health Card.\n"
+            "- Irrigation Timing: When asked when to irrigate wheat for the first time (पहला पानी / पहली सिंचाई), directly explain Crown Root Initiation (CRI / ताज मूल अवस्था), typically around 20-25 days after sowing under normal temperatures and depth. Note that FertoBot sensors monitor soil moisture but do not track calendar sowing dates, and advise inspecting crown roots. DO NOT provide chemical spray warnings or 7-day weather trend dumps unless spray or weather was asked.\n"
             "- Sodium / Salinity: The 7-in-1 sensor measures Electrical Conductivity (EC), NOT Sodium (Na). NEVER derive sodium concentrations from EC. Note that certified laboratory wet-chemistry testing is required for sodium/SAR analysis.\n"
             "- Soil Parameters: Reference actual simulated sensor readings (Moisture %, Soil Temp °C, EC dS/m, pH, Nitrogen, Phosphorus, Potassium) accurately without inventing values."
         )

@@ -145,12 +145,12 @@ async def test_case4_maize_moisture_crop_isolation():
     assert resp.success is True
     reply = resp.reply
 
-    # Must evaluate maize at 40% moisture and recommend irrigation
+    # Must evaluate maize at 40% moisture and provide guidance
     assert any(w in reply for w in ["सिंचाई", "पानी"])
-    assert any(w in reply for w in ["अवश्य", "चाहिए", "कमी", "तनाव", "अनुशंसित", "stress"])
+    assert any(w in reply for w in ["अवश्य", "चाहिए", "कमी", "तनाव", "अनुशंसित", "stress", "किसान-प्रदत्त", "नमी"])
 
     # Must mention maize critical stages or moisture threshold
-    assert any(w in reply for w in ["45%", "50%", "75%", "घुटने", "मंजर", "tasseling", "silking", "दाने"])
+    assert any(w in reply for w in ["घुटने", "मंजर", "tasseling", "सिल्क", "silking", "दाने", "जलभराव", "बनावट"])
 
     # Must disclose that maize is unmonitored / not in registered farm zones
     assert any(w in reply for w in ["पंजीकृत", "सेंसर", "नहीं है", "not registered", "unmonitored"])
@@ -202,11 +202,11 @@ async def test_maize_uncultivated_isolation_english():
     assert resp.success is True
     reply = resp.reply.lower()
 
-    # Must recommend irrigation
-    assert any(w in reply for w in ["recommend", "irrigation", "water deficit", "stress"])
+    # Must provide irrigation evaluation
+    assert any(w in reply for w in ["recommend", "irrigation", "water deficit", "stress", "moisture", "texture", "flowering"])
 
-    # Must mention maize threshold (45% or 50-75%)
-    assert any(w in reply for w in ["45%", "50%", "75%", "tasseling", "silking", "knee-high"])
+    # Must mention maize critical stages or soil/water management
+    assert any(w in reply for w in ["tasseling", "silking", "knee-high", "drainage", "waterlogging", "standing water"])
 
     # Must disclose maize is not in monitored zones
     assert any(w in reply for w in ["not registered", "unmonitored", "not on your farm"])
@@ -460,4 +460,280 @@ async def test_gemini_503_deterministic_fallback_isolation():
     assert any(w in resp.reply for w in ["डिवाइस", "बैटरी", "ऑनलाइन", "DEMO-DEVICE", "device"])
     assert "गेहूं की फसल में नमी" not in resp.reply
     assert "ताज मूल" not in resp.reply
+
+
+# =========================================================================
+# Phase 34.4 Regression Tests — Agronomic Evidence & Missing-Telemetry Safety
+# =========================================================================
+
+@pytest.mark.anyio
+async def test_missing_ph_telemetry_never_defaults_to_6_8():
+    """
+    Verifies that when pH telemetry is missing, the AI NEVER falls back to pH 6.8.
+    Must explicitly state that no current pH reading is available, withhold lime/gypsum entirely,
+    and explain that chemical amendments require certified lab tests.
+    """
+    telemetry_service.simulate_sensor_condition("DEMO-ZONE-001", "ph_missing")
+    try:
+        sid = f"test-ph-missing-{uuid.uuid4().hex[:6]}"
+        resp = await orchestrator.process_query(
+            message="मिट्टी का pH और सुधार उपाय?",
+            language="hi-IN",
+            session_id=sid,
+            zone_id="DEMO-ZONE-001",
+        )
+        assert resp.success is True
+        reply = resp.reply
+
+        # Must NEVER report 6.8 as current pH
+        assert "6.8" not in reply
+        # Must explicitly state that pH reading is unavailable
+        assert any(w in reply for w in ["उपलब्ध नहीं", "अमान्य", "नहीं है", "unavailable"])
+        # Must withhold chemical amendments without lab testing
+        assert any(w in reply for w in ["रासायनिक सुधारक", "प्रयोगशाला", "लैब टेस्ट", "बिना"])
+        assert any(w in reply for w in ["गोबर", "खाद", "FYM", "कम्पोस्ट", "जैविक"])
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+
+@pytest.mark.anyio
+async def test_stale_and_uncalibrated_ph_telemetry():
+    """
+    Verifies that stale or uncalibrated pH telemetry is clearly distinguished
+    and never treated as an active calibrated measurement.
+    """
+    # 1. Stale pH
+    telemetry_service.simulate_sensor_condition("DEMO-ZONE-001", "ph_stale")
+    try:
+        sid = f"test-ph-stale-{uuid.uuid4().hex[:6]}"
+        resp = await orchestrator.process_query(
+            message="मिट्टी का pH और सुधार उपाय?",
+            language="hi-IN",
+            session_id=sid,
+            zone_id="DEMO-ZONE-001",
+        )
+        assert resp.success is True
+        assert any(w in resp.reply for w in ["पुराना", "Stale", "उपलब्ध नहीं", "प्रमाणित नहीं"])
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+    # 2. Uncalibrated pH
+    telemetry_service.simulate_sensor_condition("DEMO-ZONE-001", "ph_uncalibrated")
+    try:
+        sid = f"test-ph-uncal-{uuid.uuid4().hex[:6]}"
+        resp = await orchestrator.process_query(
+            message="मिट्टी का pH और सुधार उपाय?",
+            language="hi-IN",
+            session_id=sid,
+            zone_id="DEMO-ZONE-001",
+        )
+        assert resp.success is True
+        assert any(w in resp.reply for w in ["असंशोधित", "Uncalibrated", "उपलब्ध नहीं", "uncalibrated"])
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+
+@pytest.mark.anyio
+async def test_ph_neutral_guidance_has_no_fixed_fym_dosage():
+    """
+    Verifies that when pH is near-neutral (6.8), the response:
+    1. Reports 6.8 accurately.
+    2. Does NOT prescribe a fixed 10-12 tonnes/ha dosage as a mandatory fact.
+    3. Recommends organic matter / FYM / compost as general guidance.
+    4. Cites Soil Health Card or soil organic carbon context for quantitative rates.
+    """
+    sid = f"test-fym-nofix-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="मिट्टी का pH और सुधार उपाय?",
+        language="hi-IN",
+        session_id=sid,
+        zone_id="DEMO-ZONE-001",
+    )
+    assert resp.success is True
+    reply = resp.reply
+
+    # Reports 6.8
+    assert "6.8" in reply
+    # Must NOT contain fixed 10-12 tonnes/ha recommendation
+    assert "10 से 12 टन" not in reply
+    assert "10 to 12 tonnes" not in reply
+    # Must recommend organic matter as general guidance
+    assert any(w in reply for w in ["गोबर की खाद", "FYM", "कम्पोस्ट", "वर्मीकम्पोस्ट", "जैविक"])
+    # Must reference Soil Health Card or organic carbon context
+    assert any(w in reply for w in ["मृदा स्वास्थ्य कार्ड", "जैविक कार्बन", "बनावट", "Soil Health Card"])
+
+
+@pytest.mark.anyio
+async def test_maize_moisture_no_universal_threshold_claims():
+    """
+    Verifies that the maize moisture advisory:
+    1. Removes dogmatic universal claims that 45% is a critical minimum threshold and 50-75% is universally optimal.
+    2. Discloses that 40% moisture is farmer-provided input.
+    3. Explains that moisture percentage alone cannot dictate irrigation without soil texture and growth stage.
+    4. Mentions critical flowering stages (tasseling/silking) and furrow drainage.
+    """
+    sid = f"test-maize-nuance-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="मक्का में 40% नमी पर पानी देना चाहिए या नहीं?",
+        language="hi-IN",
+        session_id=sid,
+    )
+    assert resp.success is True
+    reply = resp.reply
+
+    # Must NOT claim universal 45% minimum threshold as dogma
+    assert "न्यूनतम सीमा 45% है" not in reply
+    # Discloses farmer-provided input
+    assert any(w in reply for w in ["किसान-प्रदत्त", "आपके द्वारा बताई", "farmer-provided", "queried"])
+    # Mentions soil texture and stage dependence
+    assert any(w in reply for w in ["बनावट", "अवस्था", "निर्भर", "texture", "stage"])
+    # Mentions critical stages and drainage
+    assert any(w in reply for w in ["मंजर", "tasseling", "सिल्क", "silking", "जलभराव"])
+    # Does not substitute wheat reading
+    assert "48.2" not in reply
+
+
+@pytest.mark.anyio
+async def test_maize_distinguishes_farmer_input_from_sensors():
+    """
+    Verifies English maize advisory clarifies farmer input vs on-farm sensors.
+    """
+    sid = f"test-maize-farmer-input-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="Should I irrigate maize at 35% moisture?",
+        language="en-US",
+        session_id=sid,
+    )
+    assert resp.success is True
+    reply = resp.reply
+
+    # Mentions farmer-provided / queried
+    assert any(w in reply.lower() for w in ["farmer-provided", "queried", "cited", "input"])
+    # Mentions unmonitored / not registered
+    assert any(w in reply.lower() for w in ["not registered", "unmonitored", "not on your farm"])
+    # Explains percentage alone is insufficient without soil texture
+    assert any(w in reply.lower() for w in ["soil texture", "alone cannot", "growth stage"])
+
+
+@pytest.mark.anyio
+async def test_wheat_cri_qualified_by_sowing_date():
+    """
+    Verifies that the Wheat CRI first irrigation advisory:
+    1. Retains CRI stage explanation.
+    2. Avoids presenting 20-25 DAS or 30-40% yield drop as universal certainties.
+    3. Notes that sensors track soil moisture but do not track calendar sowing dates.
+    4. Instructs farmer to inspect crown roots.
+    """
+    sid = f"test-wheat-cri-qual-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="गेहूँ में पहली सिंचाई कब करें?",
+        language="hi-IN",
+        session_id=sid,
+        zone_id="DEMO-ZONE-001",
+    )
+    assert resp.success is True
+    reply = resp.reply
+
+    # Mentions CRI
+    assert any(w in reply for w in ["ताज मूल", "CRI", "Crown Root"])
+    # Mentions 20-25 days qualified by conditions
+    assert any(w in reply for w in ["20 से 25", "20-25", "सामान्यतः", "प्रायः", "अनुकूल"])
+    # Mentions sensor tracks moisture but not sowing date
+    assert any(w in reply for w in ["बुवाई की तारीख", "ट्रैक नहीं", "सेंसर", "नमी 48.2%"])
+    # Advises crown root inspection
+    assert any(w in reply for w in ["ताज जड़ों", "जांच", "सूखी", "crown roots", "inspect"])
+
+
+@pytest.mark.anyio
+async def test_unknown_zone_across_telemetry_and_all_specialists():
+    """
+    Verifies that explicit unknown zones fail closed across every telemetry function
+    and across all specialist agents (CropSymptom, IrrigationAdvisory, DeviceHealth).
+    """
+    from app.agents.crop_symptom_agent import CropSymptomAgent
+    from app.agents.irrigation_advisory_agent import IrrigationAdvisoryAgent
+    from app.agents.device_health_agent import DeviceHealthAgent
+    from app.agents.base import AgentContext
+    from app.tools.telemetry_tool import LatestTelemetryTool, DeviceStatusTool, WaterLevelTool, AlertHistoryTool, HistoricalTelemetryTool
+
+    tools = {
+        "latest_telemetry": LatestTelemetryTool(),
+        "device_status": DeviceStatusTool(),
+        "water_level": WaterLevelTool(),
+        "alert_history": AlertHistoryTool(),
+        "historical_telemetry": HistoricalTelemetryTool(),
+    }
+
+    # 1. Telemetry service level
+    assert telemetry_service.get_latest_telemetry("ZONE-999") == {}
+    assert telemetry_service.get_device_status(zone_id="ZONE-999")["status"] == "error"
+    assert telemetry_service.get_water_tank_level(zone_id="ZONE-999")["status"] == "error"
+    assert "not found" in telemetry_service.get_historical_telemetry("ZONE-999")["trend_summary"]
+
+    # 2. Specialist agents level
+    ctx = AgentContext(query="Zone 999 की स्थिति बताओ", language="hi-IN", zone_id="ZONE-999")
+
+    # CropSymptomAgent
+    c_agent = CropSymptomAgent()
+    c_res = await c_agent.execute(ctx, tools)
+    assert "पंजीकृत नहीं" in c_res.summary or "not registered" in c_res.summary.lower()
+
+    # IrrigationAdvisoryAgent
+    i_agent = IrrigationAdvisoryAgent()
+    i_res = await i_agent.execute(ctx, tools)
+    assert "पंजीकृत नहीं" in i_res.summary or "not registered" in i_res.summary.lower()
+
+    # DeviceHealthAgent
+    d_agent = DeviceHealthAgent()
+    d_res = await d_agent.execute(ctx, tools)
+    assert "पंजीकृत नहीं" in d_res.summary or "not registered" in d_res.summary.lower()
+
+
+@pytest.mark.anyio
+async def test_gemini_503_fallback_with_missing_ph_and_maize():
+    """
+    Verifies deterministic fallback synthesis during simulated 503 LLM service errors:
+    1. Missing pH query does NOT output 6.8.
+    2. Maize query does NOT substitute wheat.
+    3. Unknown zone query fails closed.
+    """
+    class ErrorLLM(MockLLMProvider):
+        async def generate_text(self, prompt: str, **kwargs) -> str:
+            raise RuntimeError("503 Service Unavailable: Simulated Gemini Outage")
+
+    err_orch = LLMOrchestrator(ErrorLLM(), fast_planning=False)
+
+    # 1. Missing pH fallback
+    telemetry_service.simulate_sensor_condition("DEMO-ZONE-001", "ph_missing")
+    try:
+        r_ph = await err_orch.process_query(
+            message="मेरी मिट्टी में सुधार के उपाय क्या हैं?",
+            language="hi-IN",
+            session_id=f"test-503-ph-{uuid.uuid4().hex[:6]}",
+            zone_id="DEMO-ZONE-001",
+        )
+        assert r_ph.success is True
+        assert "6.8" not in r_ph.reply
+        assert any(w in r_ph.reply for w in ["उपलब्ध नहीं", "अमान्य", "नहीं है", "प्रयोगशाला", "सुधारक"])
+    finally:
+        telemetry_service.reset_demo_dataset()
+
+    # 2. Maize fallback
+    r_maize = await err_orch.process_query(
+        message="मक्का की फसल में 40% नमी पर सिंचाई करें?",
+        language="hi-IN",
+        session_id=f"test-503-maize-{uuid.uuid4().hex[:6]}",
+    )
+    assert r_maize.success is True
+    assert "48.2" not in r_maize.reply
+    assert any(w in r_maize.reply for w in ["मक्का", "maize", "सेंसर", "पंजीकृत नहीं"])
+
+    # 3. Unknown zone fallback
+    r_zone = await err_orch.process_query(
+        message="Zone 88 में फसल कैसी है?",
+        language="hi-IN",
+        session_id=f"test-503-zone-{uuid.uuid4().hex[:6]}",
+    )
+    assert r_zone.success is True
+    assert any(w in r_zone.reply for w in ["पंजीकृत नहीं", "not registered", "अमान्य"])
 
