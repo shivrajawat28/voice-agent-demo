@@ -73,6 +73,18 @@ class MockLLMProvider(BaseLLMProvider):
         is_water_tank = any(w in lower for w in ["tank", "reservoir", "storage", "tanki"]) or any(w in query_text for w in ["टंकी", "टैंक"])
 
         if is_soil_improvement:
+            if "unavailable" in lower or "missing" in lower or "उपलब्ध नहीं" in prompt or "अमान्य" in prompt:
+                if is_hindi:
+                    return (
+                        "वर्तमान में इस खेत/ज़ोन के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है। "
+                        "बिना अधिकृत प्रयोगशाला परीक्षण के किसी रासायनिक सुधारक (जैसे चूना या जिप्सम) का उपयोग न करें। "
+                        "मिट्टी की संरचना व उर्वरता बनाए रखने के लिए गोबर की खाद या कम्पोस्ट का उपयोग एक सामान्य सलाह है, जिसकी निश्चित मात्रा मृदा स्वास्थ्य कार्ड से जांचें।"
+                    )
+                return (
+                    "A valid soil pH reading is currently unavailable for this zone. "
+                    "Chemical soil amendments like lime or gypsum must never be applied without a certified laboratory soil test. "
+                    "General organic matter additions help maintain soil buffering, with quantitative rates determined by a Soil Health Card."
+                )
             if is_hindi:
                 return (
                     "मिट्टी का वर्तमान pH मान 6.8 है जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "

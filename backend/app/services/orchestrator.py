@@ -2778,14 +2778,16 @@ class LLMOrchestrator(BaseConversationProvider):
             "rotation", "chakar", "tractor", "pump", "valve", "sprinkler", "drip", "tillering",
             "flower", "phool", "seed", "beej", "root", "jad", "canal", "nahar", "well", "kuan",
             "tubewell", "boring", "kisan", "farmer", "zone", "sector", "chlorosis", "peeli", "pila",
-            "brown", "rust", "blight", "rot", "status", "overview", "condition", "recommend", "salah"
+            "brown", "rust", "blight", "rot", "status", "overview", "condition", "recommend", "salah",
+            "spray", "pesticide", "fungicide", "insecticide", "chemical", "drift"
         ]) or any(k in trimmed for k in [
             "फसल", "मिट्टी", "नमी", "पानी", "सिंचाई", "मौसम", "बारिश", "तापमान", "खाद", "यूरिया",
             "डीएपी", "कीट", "रोग", "पत्ती", "गेहूं", "कपास", "टमाटर", "धान", "सरसों", "मक्का",
             "आलू", "चना", "सेंसर", "डिवाइस", "बैटरी", "टंकी", "अलर्ट", "खेती", "किसान", "उपज", "बुवाई",
             "जैविक", "पंप", "वॉल्व", "ड्रिप", "जड़", "फूल", "बीज", "पीली", "सलाह", "रिपोर्ट",
             "खेत", "जानकारी", "स्थिति", "हाल", "हालत", "समस्या", "दिक्कत", "खराबी", "परेशानी",
-            "बताओ", "बताएं", "दिखाओ", "दिखाएं", "चल रही", "सात", "हफ्ता", "दिन", "अपडेट"
+            "बताओ", "बताएं", "दिखाओ", "दिखाएं", "चल रही", "सात", "हफ्ता", "दिन", "अपडेट",
+            "छिड़काव", "स्प्रे", "कीटनाशक", "दवा"
         ])
 
         if not is_agricultural_topic and not is_conceptual_or_exploratory and not has_substantive_query:

@@ -124,6 +124,9 @@ async def test_case3_wheat_first_irrigation_cri_stage_focused():
     assert "रासायनिक छिड़काव" not in reply
     assert "foliar spray" not in reply.lower()
     assert "chemical spray" not in reply.lower()
+    # Must NOT contain duplicate weather forecast dumps
+    assert "वर्षा की संभावना" not in reply
+    assert "हवा की गति" not in reply
 
 
 @pytest.mark.anyio
@@ -736,4 +739,50 @@ async def test_gemini_503_fallback_with_missing_ph_and_maize():
     )
     assert r_zone.success is True
     assert any(w in r_zone.reply for w in ["पंजीकृत नहीं", "not registered", "अमान्य"])
+
+
+@pytest.mark.anyio
+async def test_weather_query_has_no_unsolicited_spray_recommendation():
+    """
+    Verifies that a general weather query returns meteorological parameters (temperature, humidity, rain probability)
+    WITHOUT providing unsolicited chemical spray advice when no spray inquiry was made.
+    """
+    sid = f"test-weather-nospray-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="आज मौसम कैसा रहेगा?",
+        language="hi-IN",
+        session_id=sid,
+    )
+    assert resp.success is True
+    assert resp.intent == "weather_query"
+    reply = resp.reply
+
+    # Must provide weather parameters
+    assert any(w in reply for w in ["तापमान", "डिग्री", "humidity", "आर्द्रता", "वर्षा", "हवा"])
+    # Must NOT contain unsolicited chemical spray advice
+    assert "रासायनिक छिड़काव" not in reply
+    assert "दवा का छिड़काव" not in reply
+    assert "spray" not in reply.lower()
+
+
+@pytest.mark.anyio
+async def test_spray_query_answers_spray_guidance_accurately():
+    """
+    Verifies that when a grower explicitly asks about chemical spraying,
+    the system correctly analyzes wind speed and precipitation probability to give actionable spray advice.
+    """
+    sid = f"test-spray-guidance-{uuid.uuid4().hex[:6]}"
+    resp = await orchestrator.process_query(
+        message="क्या आज दवा का छिड़काव कर सकते हैं?",
+        language="hi-IN",
+        session_id=sid,
+    )
+    assert resp.success is True
+    assert resp.intent == "spray_advisory"
+    reply = resp.reply
+
+    # Must address spray feasibility
+    assert any(w in reply for w in ["छिड़काव", "दवा", "स्प्रे", "हवा", "बारिश"])
+    # Must NOT report "demo mein yeh samajh nahi aaya"
+    assert "समझ नहीं आया" not in reply
 
