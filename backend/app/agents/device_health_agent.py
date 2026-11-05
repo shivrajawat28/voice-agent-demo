@@ -50,6 +50,24 @@ class DeviceHealthAgent(BaseAgent):
         alert_data = await alert_tool.execute(zone_id=zone_id) if alert_tool else {}
         tel_data = await tel_tool.execute(zone_id=zone_id) if tel_tool else {}
 
+        # Fail closed on unknown zone
+        if dev_data.get("status") == "error":
+            err_msg = (
+                f"ज़ोन '{zone_id}' इस फार्म में पंजीकृत नहीं है। कृपया मान्य ज़ोन चुनें।"
+                if is_hindi
+                else f"Zone '{zone_id}' is not registered on this farm. Please select a valid zone."
+            )
+            return AgentResult(
+                agent_id=self.agent_id,
+                name=self.name,
+                summary=err_msg,
+                finding=err_msg,
+                confidence=1.0,
+                evidence=[f"Requested Zone: {zone_id}", "Status: Not Registered"],
+                limitations=["Unknown zone requested."],
+                status="completed",
+            )
+
         device_id = dev_data.get("device_id", "DEMO-DEVICE-001")
         status = dev_data.get("status", "online")
         battery = dev_data.get("battery_level_pct", 92.0)

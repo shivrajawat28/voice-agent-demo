@@ -68,20 +68,32 @@ class WeatherContextAgent(BaseAgent):
         if rain_prob > 50.0:
             agronomic_factors.append(f"High rain probability ({rain_prob:.0f}%) expected to recharge topsoil.")
 
+        is_spray_inquiry = any(w in context.query.lower() for w in ["spray", "drift", "chemical", "pesticide", "herbicide", "fungicide", "dawa", "chidkaav"]) or any(w in context.query for w in ["छिड़काव", "स्प्रे", "दवा", "कीटनाशक", "कीटनाशी"])
+
         if is_hindi:
             summary = (
                 f"मौसम रिपोर्ट: तापमान {temp:.1f}°C, आर्द्रता {humidity:.1f}%, और हवा की गति {wind_speed:.1f} km/h है। "
-                f"अगले 24 घंटों में {rain_prob:.0f}% वर्षा की संभावना है। "
+                f"अगले 24 घंटों में {rain_prob:.0f}% वर्षा की संभावना है।"
             )
-            if rain_prob >= 50.0:
-                summary += "वर्षा की संभावना के कारण रासायनिक छिड़काव अभी टालें।"
+            if is_spray_inquiry:
+                if rain_prob >= 50.0:
+                    summary += " वर्षा की संभावना के कारण रासायनिक छिड़काव अभी टालें।"
+                elif wind_speed > 15.0:
+                    summary += " तेज़ हवा के कारण दवा बहने (spray drift) का जोखिम है, अतः रासायनिक छिड़काव न करें।"
+                else:
+                    summary += " हवा शांत है और बारिश की संभावना नहीं है, अतः रासायनिक छिड़काव सुरक्षित रूप से किया जा सकता है।"
         else:
             summary = (
                 f"Current meteorological conditions: {temp:.1f}°C, {humidity:.1f}% humidity, "
-                f"and {wind_speed:.1f} km/h wind. 24-hour precipitation probability stands at {rain_prob:.0f}%. "
+                f"and {wind_speed:.1f} km/h wind. 24-hour precipitation probability stands at {rain_prob:.0f}%."
             )
-            if rain_prob >= 50.0:
-                summary += "Precipitation expected; avoid foliar pesticide or herbicide applications today."
+            if is_spray_inquiry:
+                if rain_prob >= 50.0:
+                    summary += " Precipitation expected; avoid foliar pesticide or herbicide applications today."
+                elif wind_speed > 15.0:
+                    summary += " High wind speed exceeds spray drift threshold; foliar spraying not advised today."
+                else:
+                    summary += " Wind and precipitation conditions are calm and favorable for chemical spraying."
 
         return AgentResult(
             agent_id=self.agent_id,

@@ -355,8 +355,6 @@ class TelemetryService(BaseTelemetryProvider):
         if zone_id is not None and zone_id not in self._zones:
             return {}
 
-        if zone_id is not None and zone_id not in self._zones:
-            raise KeyError(f"Zone '{zone_id}' not found in canonical soil profile data.")
         target_zone = zone_id or self._active_zone_id
         if target_zone not in self._zones:
             target_zone = "DEMO-ZONE-001"
@@ -392,8 +390,6 @@ class TelemetryService(BaseTelemetryProvider):
                 "is_simulated": True,
             }
 
-        if zone_id is not None and zone_id not in self._zones:
-            raise KeyError(f"Zone '{zone_id}' not found in canonical soil profile data.")
         target_zone = zone_id or self._active_zone_id
         if target_zone not in self._zones:
             target_zone = "DEMO-ZONE-001"
@@ -707,6 +703,16 @@ class TelemetryService(BaseTelemetryProvider):
         zone_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Retrieves device online/offline status, battery level, and packet timestamps."""
+        if zone_id is not None and zone_id not in self._zones:
+            return {
+                "status": "error",
+                "error": f"Zone '{zone_id}' not found in farm telemetry records.",
+                "zone_id": zone_id,
+                "device_status": "unavailable",
+                "battery_level_pct": 0.0,
+                "data_source": "unavailable",
+                "is_simulated": True,
+            }
         target_zone = zone_id or self._active_zone_id
         if device_id:
             for zid, z in self._zones.items():
@@ -732,6 +738,16 @@ class TelemetryService(BaseTelemetryProvider):
 
     def get_water_tank_level(self, zone_id: Optional[str] = None) -> Dict[str, Any]:
         """Retrieves reservoir tank level."""
+        if zone_id is not None and zone_id not in self._zones:
+            return {
+                "status": "error",
+                "error": f"Zone '{zone_id}' not found in farm telemetry records.",
+                "farm_id": self._farm_id,
+                "zone_id": zone_id,
+                "water_tank_level_pct": 0.0,
+                "data_source": "unavailable",
+                "is_simulated": True,
+            }
         target_zone = zone_id or self._active_zone_id
         zone_data = self._zones.get(target_zone, self._zones["DEMO-ZONE-001"])
         lvl = zone_data.get("water_tank_level_pct", 82.0)
@@ -962,7 +978,9 @@ class TelemetryService(BaseTelemetryProvider):
 
         # 6. Soil pH
         ph_val = z.get("ph")
-        ph_quality = "UNAVAILABLE" if ph_val is None else ("OUT_OF_RANGE" if (ph_val < 0.0 or ph_val > 14.0) else "VALID")
+        ph_stale = z.get("ph_is_stale", False)
+        ph_uncal = z.get("ph_uncalibrated", False)
+        ph_quality = "UNAVAILABLE" if ph_val is None else ("OUT_OF_RANGE" if (ph_val < 0.0 or ph_val > 14.0) else ("STALE" if ph_stale else "VALID"))
         params["soil_ph"] = SoilParameterReading(
             parameter_name="soil_ph",
             display_name="Soil pH",
@@ -971,15 +989,15 @@ class TelemetryService(BaseTelemetryProvider):
             raw_value=ph_val,
             unit="pH",
             raw_unit="pH scale (0-14)",
-            timestamp_iso=z.get("reading_timestamp_iso") or now_iso,
+            timestamp_iso=z.get("ph_timestamp_iso") or z.get("reading_timestamp_iso") or now_iso,
             sensor_id=f"{device_id}-SENS-PH",
             device_id=device_id,
             farm_id=z.get("farm_id", self._farm_id),
             zone_id=target_zone,
             data_source="SIMULATED",
-            quality_status=ph_quality,
-            calibration_status="CALIBRATED",
-            validity_status="VALID" if ph_quality == "VALID" else ("INVALID" if ph_quality == "OUT_OF_RANGE" else "DISCONNECTED"),
+            quality_status="SUSPECT" if ph_uncal else ph_quality,
+            calibration_status="UNCALIBRATED" if ph_uncal else "CALIBRATED",
+            validity_status="VALID" if ph_quality in ["VALID", "STALE"] and not ph_uncal else ("INVALID" if ph_quality == "OUT_OF_RANGE" else "DISCONNECTED"),
             agricultural_relevance="मिट्टी में सभी 16 पोषक तत्वों की रासायनिक उपलब्धता का निर्धारण (Chemical solubility and bioavailability of all nutrients)",
             crop_reference_range=benchmarks["ph"],
         )
@@ -1141,6 +1159,18 @@ class TelemetryService(BaseTelemetryProvider):
 
         elif condition_type == "temperature_disconnected":
             z["soil_temperature_c"] = None
+
+        elif condition_type in ["ph_missing", "ph_disconnected"]:
+            z["ph"] = None
+            if "ph" not in z.get("missing_fields", []):
+                z.setdefault("missing_fields", []).append("ph")
+
+        elif condition_type == "ph_stale":
+            z["ph_is_stale"] = True
+            z["ph_timestamp_iso"] = (now - timedelta(days=4)).isoformat()
+
+        elif condition_type == "ph_uncalibrated":
+            z["ph_uncalibrated"] = True
 
         elif condition_type == "ph_out_of_range":
             z["ph"] = 15.2  # Outside 0-14 pH scale

@@ -46,6 +46,24 @@ class IrrigationAdvisoryAgent(BaseAgent):
         tel_tool = tools.get("latest_telemetry") or tools.get("farm_telemetry")
         tel_data = await tel_tool.execute(zone_id=zone_id) if tel_tool else {}
 
+        # Fail closed on unknown zone
+        if tel_data.get("status") == "error":
+            err_msg = (
+                f"ज़ोन '{zone_id}' इस फार्म में पंजीकृत नहीं है। कृपया मान्य ज़ोन चुनें।"
+                if is_hindi
+                else f"Zone '{zone_id}' is not registered on this farm. Please select a valid zone."
+            )
+            return AgentResult(
+                agent_id=self.agent_id,
+                name=self.name,
+                summary=err_msg,
+                finding=err_msg,
+                confidence=1.0,
+                evidence=[f"Requested Zone: {zone_id}", "Status: Not Registered"],
+                limitations=["Unknown zone requested."],
+                status="completed",
+            )
+
         # 2. Retrieve historical moisture trend
         hist_tool = tools.get("historical_telemetry")
         hist_data = await hist_tool.execute(zone_id=zone_id, parameter="soil_moisture_pct", time_range="7d") if hist_tool else {}
@@ -57,29 +75,39 @@ class IrrigationAdvisoryAgent(BaseAgent):
         crop = tel_data.get("crop", "wheat")
         growth_stage = tel_data.get("growth_stage", "Tillering")
         soil_type = tel_data.get("soil_type", "Clay-Loam")
-        moisture = tel_data.get("soil_moisture_pct", 48.2)
-        soil_temp = tel_data.get("soil_temperature_c", 22.4)
-        ec = tel_data.get("electrical_conductivity_ds_m", 1.2)
-        ph = tel_data.get("ph", 6.8)
-        completeness_ratio = tel_data.get("completeness_ratio", "7/7 parameters available")
-        tank_level = tel_data.get("water_tank_level_pct", 82.0)
-        rain_prob = weath_data.get("rain_probability_24h_pct", 65.0)
-        trend_summary = hist_data.get("trend_summary", "Stable moisture levels")
+        moisture = tel_data.get("soil_moisture_pct")
+        soil_temp = tel_data.get("soil_temperature_c")
+        ec = tel_data.get("electrical_conductivity_ds_m")
+        ph = tel_data.get("ph")
+        completeness_ratio = tel_data.get("completeness_ratio", "Telemetry available")
+        tank_level = tel_data.get("water_tank_level_pct")
+        rain_prob = weath_data.get("rain_probability_24h_pct", 0.0)
+        trend_summary = hist_data.get("trend_summary", "Trend data unavailable")
 
         # Specific query topics
+        is_first_irrigation = (
+            any(w in query_lower for w in ["pehli sinchai", "first irrigation", "पहली सिंचाई", "पहला पानी", "1st irrigation", "first water"])
+            or (any(w in query_lower for w in ["kab kare", "kab karni", "kab de", "timing", "schedule"]) and any(w in query_lower for w in ["irrigation", "sinchai", "water", "पानी", "सिंचाई"]))
+            or any(w in context.query for w in ["पहली सिंचाई", "पहला पानी", "कब करें", "कब पानी दें", "कब सिंचाई"])
+        )
+        is_maize_query = any(w in query_lower for w in ["maize", "makka", "corn", "मक्का", "मक्के", "bhutta", "भुट्टा"])
         is_cotton_irrigation = any(w in query_lower for w in ["cotton", "कपास"]) and any(w in query_lower for w in ["manage", "kaise", "irrigation", "सिंचाई"])
         is_over_irrigation = any(w in query_lower for w in ["over-irrigation", "over irrigation", "jyada paani", "disadvantage", "nuksan", "हानि", "अत्यधिक सिंचाई"])
         is_monsoon = any(w in query_lower for w in ["monsoon", "barish", "बरसात", "मानसून", "precaution", "सावधानी"])
 
+        # Check for user-specified moisture in query (e.g. "40% नमी पर पानी देना चाहिए या नहीं?")
+        specified_moisture_match = re.search(r"(\d{1,2}(?:\.\d+)?)\s*(?:%|प्रतिशत)?\s*(?:नमी|moisture)", context.query, re.IGNORECASE) or re.search(r"(?:नमी|moisture)\s*(\d{1,2}(?:\.\d+)?)", context.query, re.IGNORECASE)
+        query_specified_moisture = float(specified_moisture_match.group(1)) if specified_moisture_match else None
+
         evidence: List[str] = [
             f"Zone: {tel_data.get('zone_name', zone_id)}",
             f"Crop: {crop} ({growth_stage}, Soil: {soil_type})",
-            f"Current Soil Moisture: {moisture:.1f}% (Simulated FertoBot probe)",
+            f"Current Soil Moisture: {moisture:.1f}% (Simulated FertoBot probe)" if moisture is not None else "Current Soil Moisture: Unavailable",
             f"7-Day Trend: {trend_summary}",
-            f"Soil Temperature: {soil_temp:.1f}°C",
-            f"Electrical Conductivity (EC): {ec:.2f} dS/m (Salinity: {'Elevated / Salinity Risk' if ec > 2.0 else 'Optimal / Normal'})",
-            f"Soil pH: {ph:.1f}",
-            f"Water Reservoir Storage: {tank_level:.1f}%",
+            f"Soil Temperature: {soil_temp:.1f}°C" if soil_temp is not None else "Soil Temperature: Unavailable",
+            f"Electrical Conductivity (EC): {ec:.2f} dS/m" if ec is not None else "EC: Unavailable",
+            f"Soil pH: {ph:.1f}" if ph is not None else "Soil pH: Unavailable",
+            f"Water Reservoir Storage: {tank_level:.1f}%" if tank_level is not None else "Water Reservoir Storage: Unavailable",
             f"Forecasted Rain Probability: {rain_prob:.0f}% in next 24h (Live Open-Meteo)",
             f"Telemetry Completeness: {completeness_ratio}",
             "Data Source: Simulated Soil Telemetry + Live Meteorological Forecast",
@@ -91,7 +119,46 @@ class IrrigationAdvisoryAgent(BaseAgent):
             "Automated valve actuation is prohibited; farmer must physically manage irrigation controls.",
         ]
 
-        if is_cotton_irrigation:
+        if is_maize_query:
+            limitations.append("Maize is not registered in any monitored sensor zone on this farm (farm zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard).")
+            limitations.append("Moisture percentage queried reflects farmer-reported input, not calibrated on-farm telemetry.")
+            eval_m_str = f"{query_specified_moisture:.0f}%" if query_specified_moisture is not None else "40%"
+            if is_hindi:
+                summary = (
+                    f"मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन केवल गेहूं, कपास, टमाटर और सरसों के हैं)। "
+                    f"आपके द्वारा बताई गई {eval_m_str} नमी की रीडिंग किसान-प्रदत्त है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
+                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट), सेंसर की गहराई और फसल की अवस्था पर निर्भर करता है। "
+                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) की क्रांतिक अवस्थाओं पर नमी की कमी सबसे अधिक नुकसानदायक होती है। "
+                    "जलभराव से बचते हुए हल्की सिंचाई करें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान वृद्धि अवस्था बताएं।"
+                )
+            else:
+                summary = (
+                    f"Maize is not registered in any monitored sensor zone on your farm (registered zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
+                    f"The queried {eval_m_str} soil moisture represents farmer-provided input rather than calibrated on-farm telemetry. "
+                    "A moisture percentage alone cannot definitively dictate irrigation without establishing soil texture, sensor depth, root-zone depth, and crop growth stage. "
+                    "Moisture stress is most damaging during flowering stages—tasseling and silking/grain filling—while ensuring proper furrow drainage as maize is intolerant of standing water. "
+                    "To provide accurate guidance, please share your soil texture and current crop growth stage."
+                )
+
+        elif is_first_irrigation and ("wheat" in query_lower or "गेहूं" in context.query or "गेहु" in context.query or "wheat" in crop.lower()):
+            moist_str = f"{moisture:.1f}%" if moisture is not None else "उपलब्ध नहीं"
+            if is_hindi:
+                summary = (
+                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
+                    "हालांकि, यह समय बुवाई की गहराई, तापमान और किस्म के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार, क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
+                    f"फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) की मिट्टी की नमी {moist_str} है। "
+                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें।"
+                )
+            else:
+                moist_en = f"{moisture:.1f}%" if moisture is not None else "unavailable"
+                summary = (
+                    "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
+                    "However, exact timing varies with sowing depth, ambient temperature, variety, and initial seedbed moisture. Agronomic literature indicates that severe moisture deficit during crown root formation may risk potential yield penalties of up to 30% to 40%. "
+                    f"While FertoBot sensors monitor soil moisture (currently {moist_en} in Zone 1 Wheat), they do not track calendar sowing dates. "
+                    "Inspect the crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation."
+                )
+
+        elif is_cotton_irrigation:
             if is_hindi:
                 summary = (
                     "कॉटन (कपास) की सिंचाई प्रबंधन की प्रमुख वैज्ञानिक विधियां: "

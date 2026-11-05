@@ -49,6 +49,24 @@ class CropSymptomAgent(BaseAgent):
         if tel_tool:
             tel_data = await tel_tool.execute(zone_id=zone_id)
 
+        # Fail closed on unknown zone
+        if tel_data.get("status") == "error":
+            err_msg = (
+                f"ज़ोन '{zone_id}' इस फार्म में पंजीकृत नहीं है। कृपया मान्य ज़ोन चुनें।"
+                if is_hindi
+                else f"Zone '{zone_id}' is not registered on this farm. Please select a valid zone."
+            )
+            return AgentResult(
+                agent_id=self.agent_id,
+                name=self.name,
+                summary=err_msg,
+                finding=err_msg,
+                confidence=1.0,
+                evidence=[f"Requested Zone: {zone_id}", "Status: Not Registered"],
+                limitations=["Unknown zone requested."],
+                status="completed",
+            )
+
         crop_from_tel = tel_data.get("crop")
         variety_from_tel = tel_data.get("variety")
         stage_from_tel = tel_data.get("growth_stage")
@@ -57,6 +75,33 @@ class CropSymptomAgent(BaseAgent):
         p_val = tel_data.get("phosphorus_mg_kg")
         k_val = tel_data.get("potassium_mg_kg")
         ph_val = tel_data.get("ph")
+        ph_is_stale = tel_data.get("ph_is_stale", False)
+        ph_uncal = tel_data.get("ph_uncalibrated", False)
+
+        # Audit canonical soil profile for ph metadata if present
+        canonical = tel_data.get("canonical_soil_profile", {})
+        ph_param = canonical.get("parameters", {}).get("soil_ph", {}) if isinstance(canonical, dict) else {}
+        if ph_param:
+            if ph_param.get("calibration_status") == "UNCALIBRATED":
+                ph_uncal = True
+            if ph_param.get("quality_status") == "STALE":
+                ph_is_stale = True
+            if ph_param.get("quality_status") == "OUT_OF_RANGE":
+                ph_val = -1.0
+            elif ph_param.get("quality_status") == "UNAVAILABLE":
+                ph_val = None
+
+        if ph_val is None:
+            ph_status = "MISSING"
+        elif ph_val < 0.0 or ph_val > 14.0:
+            ph_status = "INVALID"
+        elif ph_uncal:
+            ph_status = "UNCALIBRATED"
+        elif ph_is_stale:
+            ph_status = "STALE"
+        else:
+            ph_status = "MEASURED"
+
         ec_val = tel_data.get("electrical_conductivity_ds_m")
         moisture_val = tel_data.get("soil_moisture_pct")
         temp_val = tel_data.get("soil_temperature_c")
@@ -91,7 +136,13 @@ class CropSymptomAgent(BaseAgent):
         detected_topic = None
         detected_symptom = None
 
-        if any(w in query_lower for w in ["aur kya uga", "kya uga sakte", "suitab", "best crop", "kaunsi crop", "kaunsi fasal", "what to grow"]):
+        if any(w in query_lower for w in ["sudhar", "sudhar upay", "upay", "amendment", "improve", "remedy", "gypsum", "lime"]) and any(w in query_lower for w in ["ph", "soil", "mitti", "पीएच", "मिट्टी"]) or any(w in context.query for w in ["सुधार", "उपाय", "सुधार उपाय", "जिप्सम", "चूना"]):
+            detected_topic = "soil_improvement"
+        elif any(w in query_lower for w in ["matra", "quantity", "dosage", "dose", "kitni dale", "kitna dale", "sahi matra", "मात्रा"]) and any(w in query_lower for w in ["urea", "dap", "fertilizer", "khad", "यूरिया", "डीएपी", "खाद", "उर्वरक"]) or any(w in context.query for w in ["मात्रा", "सही मात्रा"]):
+            detected_topic = "fertilizer_quantity"
+        elif any(w in query_lower for w in ["fertilizer", "khad", "उर्वरक", "खाद"]) and any(w in query_lower for w in ["recommend", "salah", "kaunsi", "which", "सिफारिश"]):
+            detected_topic = "fertilizer_quantity"
+        elif any(w in query_lower for w in ["aur kya uga", "kya uga sakte", "suitab", "best crop", "kaunsi crop", "kaunsi fasal", "what to grow"]):
             detected_topic = "crop_suitability"
         elif any(w in query_lower for w in ["ph 6.8", "soil ph", "ph ka kya matlab", "ph scale", "पीएच"]):
             detected_topic = "ph"
@@ -165,19 +216,134 @@ class CropSymptomAgent(BaseAgent):
                 )
             limitations.append("Geographic location, season, and irrigation infrastructure unconfirmed by grower.")
 
-        elif detected_topic == "ph":
+        elif detected_topic == "soil_improvement":
+            if ph_status in ["MISSING", "INVALID", "UNCALIBRATED", "STALE"]:
+                if is_hindi:
+                    if ph_status == "MISSING":
+                        ph_note = "वर्तमान में आपके खेत/ज़ोन के लिए मिट्टी का pH मान उपलब्ध नहीं है।"
+                    elif ph_status == "UNCALIBRATED":
+                        ph_note = "मिट्टी का pH सेंसर चैनल वर्तमान में असंशोधित (Uncalibrated) है।"
+                    elif ph_status == "STALE":
+                        ph_note = "मिट्टी का pH डेटा पुराना (Stale) है और वर्तमान स्थिति को प्रमाणित नहीं करता।"
+                    else:
+                        ph_note = f"मिट्टी का दर्ज pH मान ({ph_val}) अमान्य (Out of Range) है।"
+                    summary = (
+                        f"{ph_note} बिना अधिकृत प्रयोगशाला परीक्षण के किसी रासायनिक सुधारक (जैसे कृषि चूना या जिप्सम) का उपयोग न करें। "
+                        "मिट्टी की भौतिक संरचना और जैविक गतिविधि को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                        "हालांकि, इसकी सही मात्रा आपके खेत के जैविक कार्बन (Soil Organic Carbon) और फसल के प्रकार पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड (Soil Health Card) की सिफारिशें देखें।"
+                    )
+                else:
+                    if ph_status == "MISSING":
+                        ph_note = "Current soil pH reading is unavailable for this zone."
+                    elif ph_status == "UNCALIBRATED":
+                        ph_note = "The soil pH sensor channel is currently uncalibrated."
+                    elif ph_status == "STALE":
+                        ph_note = "The soil pH reading is stale and cannot be verified for active decision-making."
+                    else:
+                        ph_note = f"The recorded soil pH value ({ph_val}) is out of physical range (invalid)."
+                    summary = (
+                        f"{ph_note} Chemical soil amendments such as agricultural lime or gypsum must never be applied without a certified soil test report. "
+                        "To maintain soil structure and biological activity, regular incorporation of well-decomposed organic manure or compost is recommended as general guidance. "
+                        "Specific application rates depend on soil organic carbon percentage, soil texture, and crop requirements documented in your Soil Health Card."
+                    )
+            else:
+                if 6.0 <= ph_val <= 7.5:
+                    if is_hindi:
+                        summary = (
+                            f"मिट्टी का वर्तमान मापा गया pH मान {ph_val} है, जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
+                            "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
+                            "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या वर्मीकम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
+                            "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए अपने मृदा स्वास्थ्य कार्ड की जांच करें। "
+                            "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है।"
+                        )
+                    else:
+                        summary = (
+                            f"The current measured soil pH is {ph_val}, which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
+                            "At this pH level, chemical soil amendments like lime or gypsum are not required. "
+                            "To maintain soil health, biological carbon, and buffering capacity, incorporating well-decomposed organic manure or compost is advised as general agronomic guidance. "
+                            "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop needs from a certified Soil Health Card. "
+                            "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5)."
+                        )
+                elif ph_val < 6.0:
+                    if is_hindi:
+                        summary = (
+                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो अम्लीय (Acidic) स्तर दर्शाता है। "
+                            "अम्लीय मिट्टी में फॉस्फोरस का स्थिरीकरण बढ़ जाता है। मिट्टी की अम्लता सुधारने के लिए कृषि चूना (Agricultural Lime / CaCO3) की आवश्यकता हो सकती है, "
+                            "लेकिन चूने की सटीक मात्रा बफर pH और मृदा परीक्षण लैब की सिफारिश के बाद ही डालें। साथ ही जैविक खाद का उपयोग करें।"
+                        )
+                    else:
+                        summary = (
+                            f"The current measured soil pH is {ph_val}, indicating acidic soil conditions. "
+                            "In acidic soils, phosphorus bioavailability is restricted. Agricultural lime may be required to neutralize acidity, "
+                            "but exact dosage must be based on a certified laboratory buffer-pH test. Incorporating organic compost helps improve buffering capacity."
+                        )
+                else:
+                    if is_hindi:
+                        summary = (
+                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो क्षारीय (Alkaline) स्तर दर्शाता है। "
+                            "क्षारीय या सोदिक मिट्टी में सूक्ष्म पोषक तत्वों की उपलब्धता घटती है। सुधार के लिए कृषि जिप्सम (Agricultural Gypsum) और हरी खाद (ढैंचा) उपयोगी होती है, "
+                            "लेकिन जिप्सम की मात्रा लैब से विनिमयशील सोडियम प्रतिशत (ESP) जांच के आधार पर ही तय करें।"
+                        )
+                    else:
+                        summary = (
+                            f"The current measured soil pH is {ph_val}, indicating alkaline conditions. "
+                            "Alkaline conditions can induce micronutrient deficiencies. Agricultural gypsum and green manuring can assist in reclamation, "
+                            "but gypsum requirements must be determined strictly through certified soil testing for exchangeable sodium percentage (ESP)."
+                        )
+
+        elif detected_topic == "fertilizer_quantity":
+            limitations.append("Quantitative fertilizer dosage requires confirmation of crop species, growth stage, plot size, and certified soil test report.")
+            crop_label_hi = f"{detected_crop} या किसी भी फसल" if detected_crop else "फसलों"
+            crop_label_en = f"{detected_crop} or any crop" if detected_crop else "crops"
             if is_hindi:
                 summary = (
-                    f"मिट्टी का pH मान 6.8 एक आदर्श और तटस्थ (Neutral) स्तर है। इसका मतलब है कि मिट्टी न तो अम्लीय है और न ही क्षारीय। "
-                    "इस pH पर नाइट्रोजन, फॉस्फोरस और पोटाश (NPK) सहित सभी आवश्यक सूक्ष्म पोषक तत्वों की उपलब्धता पौधों के लिए अधिकतम होती है। "
-                    "यह अधिकांश फसलों (गेहूं, सरसों, चना, सब्जियां) के लिए सर्वोत्तम स्थिति है।"
+                    f"{crop_label_hi} के लिए बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया और डीएपी की निश्चित मात्रा तय करना वैज्ञानिक रूप से सुरक्षित नहीं है। "
+                    "सिद्धांततः डीएपी बुवाई के समय बेसल डोज के रूप में जड़ों के विकास के लिए दिया जाता है, जबकि यूरिया को 2 से 3 भागों में बांटकर (बुवाई, पहली सिंचाई/CRI, और कल्ले फूटते समय) दिया जाता है ताकि लीचिंग न हो। "
+                    "सटीक मात्रा की सिफारिश के लिए कृपया अपनी फसल का नाम, फसल की अवस्था (बुवाई या सिंचाई) और खेत का क्षेत्रफल बताएं।"
                 )
             else:
                 summary = (
-                    "A soil pH of 6.8 indicates an optimal, near-neutral condition. "
-                    "At this pH level, nutrient bioavailability for Nitrogen, Phosphorus, Potassium, and key micronutrients is at its peak. "
-                    "This range is ideal for almost all agricultural crops including wheat, mustard, legumes, and vegetables."
+                    f"Prescribing a fixed universal dosage of Urea and DAP for {crop_label_en} without knowing the crop growth stage and soil test results is agronomically unsafe. "
+                    "Agronomically, DAP is applied at sowing as a basal dose for early root architecture development, while Urea is split into 2-3 applications (at sowing, CRI/first irrigation, and tillering) to avoid nitrogen leaching. "
+                    "To provide an accurate recommendation, please specify: which crop are you growing, its current growth stage, and your plot size or soil-test report."
                 )
+
+        elif detected_topic == "ph":
+            if ph_status in ["MISSING", "INVALID", "UNCALIBRATED", "STALE"]:
+                if is_hindi:
+                    summary = (
+                        "वर्तमान में आपके खेत/ज़ोन के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है। "
+                        "सटीक जानकारी के लिए कृपया निकटतम कृषि विज्ञान केंद्र या अधिकृत प्रयोगशाला से मिट्टी की जांच कराएं।"
+                    )
+                else:
+                    summary = (
+                        "A valid soil pH reading is currently unavailable for this zone. "
+                        "Please obtain a certified soil test report from an authorized agricultural laboratory for accurate pH guidance."
+                    )
+            else:
+                if 6.0 <= ph_val <= 7.5:
+                    if is_hindi:
+                        summary = (
+                            f"मिट्टी का मापा गया pH मान {ph_val} एक आदर्श और तटस्थ (Neutral) स्तर है। इसका मतलब है कि मिट्टी न तो अम्लीय है और न ही क्षारीय। "
+                            "इस pH पर नाइट्रोजन, फॉस्फोरस और पोटाश (NPK) सहित सभी आवश्यक सूक्ष्म पोषक तत्वों की उपलब्धता पौधों के लिए अधिकतम होती है। "
+                            "यह अधिकांश फसलों (गेहूं, सरसों, चना, सब्जियां) के लिए सर्वोत्तम स्थिति है।"
+                        )
+                    else:
+                        summary = (
+                            f"The measured soil pH of {ph_val} indicates an optimal, near-neutral condition. "
+                            "At this pH level, nutrient bioavailability for Nitrogen, Phosphorus, Potassium, and key micronutrients is at its peak. "
+                            "This range is ideal for almost all agricultural crops including wheat, mustard, legumes, and vegetables."
+                        )
+                elif ph_val < 6.0:
+                    if is_hindi:
+                        summary = f"मिट्टी का मापा गया pH मान {ph_val} है, जो अम्लीय स्तर दर्शाता है। अम्लीय मिट्टी में फॉस्फोरस और सूक्ष्म पोषक तत्वों का अवशोषण प्रभावित हो सकता है।"
+                    else:
+                        summary = f"The measured soil pH is {ph_val}, indicating an acidic condition that can restrict nutrient availability."
+                else:
+                    if is_hindi:
+                        summary = f"मिट्टी का मापा गया pH मान {ph_val} है, जो क्षारीय स्तर दर्शाता है। क्षारीय मिट्टी में जिंक और आयरन जैसे सूक्ष्म पोषक तत्वों की कमी हो सकती है।"
+                    else:
+                        summary = f"The measured soil pH is {ph_val}, indicating an alkaline condition that can induce micronutrient deficiencies."
 
         elif detected_topic == "npk":
             if is_hindi:
