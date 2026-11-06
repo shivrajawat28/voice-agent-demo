@@ -228,9 +228,9 @@ class CropSymptomAgent(BaseAgent):
                     else:
                         ph_note = f"मिट्टी का दर्ज pH मान ({ph_val}) अमान्य (Out of Range) है।"
                     summary = (
-                        f"{ph_note} बिना अधिकृत प्रयोगशाला परीक्षण के किसी रासायनिक सुधारक (जैसे कृषि चूना या जिप्सम) का उपयोग न करें। "
-                        "मिट्टी की भौतिक संरचना और जैविक गतिविधि को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
-                        "हालांकि, इसकी सही मात्रा आपके खेत के जैविक कार्बन (Soil Organic Carbon) और फसल के प्रकार पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड (Soil Health Card) की सिफारिशें देखें।"
+                        f"{ph_note} बिना अधिकृत लैब टेस्ट के कृषि चूना या जिप्सम जैसे रासायनिक सुधारक न डालें। "
+                        "मिट्टी की उर्वरता के लिए सड़ी गोबर की खाद या कम्पोस्ट का उपयोग करें, "
+                        "जिसकी सटीक मात्रा मृदा स्वास्थ्य कार्ड (Soil Health Card) से तय करें।"
                     )
                 else:
                     if ph_status == "MISSING":
@@ -242,53 +242,45 @@ class CropSymptomAgent(BaseAgent):
                     else:
                         ph_note = f"The recorded soil pH value ({ph_val}) is out of physical range (invalid)."
                     summary = (
-                        f"{ph_note} Chemical soil amendments such as agricultural lime or gypsum must never be applied without a certified soil test report. "
-                        "To maintain soil structure and biological activity, regular incorporation of well-decomposed organic manure or compost is recommended as general guidance. "
-                        "Specific application rates depend on soil organic carbon percentage, soil texture, and crop requirements documented in your Soil Health Card."
+                        f"{ph_note} Chemical soil amendments such as lime or gypsum must never be applied without a certified lab test. "
+                        "Incorporate well-decomposed organic manure or compost for general soil health, with precise rates guided by a Soil Health Card."
                     )
             else:
                 if 6.0 <= ph_val <= 7.5:
                     if is_hindi:
                         summary = (
-                            f"मिट्टी का वर्तमान मापा गया pH मान {ph_val} है, जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
-                            "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
-                            "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या वर्मीकम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
-                            "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए अपने मृदा स्वास्थ्य कार्ड की जांच करें। "
-                            "रासायनिक सुधारकों का प्रयोग केवल असंतुलित मिट्टी में किया जाता है: अम्लीय मिट्टी (pH < 6.0) में कृषि चूना और क्षारीय मिट्टी (pH > 7.5) में अधिकृत लैब टेस्ट के आधार पर ही जिप्सम डाला जाता है।"
+                            f"मिट्टी का मापा गया pH मान {ph_val} है, जो अधिकांश फसलों के लिए आदर्श और तटस्थ (Neutral) स्तर है। "
+                            "इस pH पर चूना या जिप्सम जैसे रासायनिक सुधारक न डालें। "
+                            "मिट्टी की उर्वरता बनाए रखने के लिए सड़ी गोबर की खाद (FYM) या कम्पोस्ट का सामान्य उपयोग करें। "
+                            "खाद की सटीक मात्रा मृदा स्वास्थ्य कार्ड व लैब परीक्षण अनुसार तय करें।"
                         )
                     else:
                         summary = (
-                            f"The current measured soil pH is {ph_val}, which is within the optimal near-neutral range (6.0-7.5) for agricultural crops. "
-                            "At this pH level, chemical soil amendments like lime or gypsum are not required. "
-                            "To maintain soil health, biological carbon, and buffering capacity, incorporating well-decomposed organic manure or compost is advised as general agronomic guidance. "
-                            "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop needs from a certified Soil Health Card. "
-                            "Chemical amendments should only be applied based on certified lab testing: agricultural lime for acidic soils (pH < 6.0) and agricultural gypsum for alkaline soils (pH > 7.5)."
+                            f"The measured soil pH is {ph_val}, which is within the optimal near-neutral range for crops. "
+                            "Chemical amendments like lime or gypsum are not required at this pH. "
+                            "Incorporate well-decomposed organic manure or compost for general soil health, with precise dosage based on Soil Health Card lab testing."
                         )
                 elif ph_val < 6.0:
                     if is_hindi:
                         summary = (
-                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो अम्लीय (Acidic) स्तर दर्शाता है। "
-                            "अम्लीय मिट्टी में फॉस्फोरस का स्थिरीकरण बढ़ जाता है। मिट्टी की अम्लता सुधारने के लिए कृषि चूना (Agricultural Lime / CaCO3) की आवश्यकता हो सकती है, "
-                            "लेकिन चूने की सटीक मात्रा बफर pH और मृदा परीक्षण लैब की सिफारिश के बाद ही डालें। साथ ही जैविक खाद का उपयोग करें।"
+                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो अम्लीय स्तर दर्शाता है। "
+                            "सुधार के लिए कृषि चूना की आवश्यकता हो सकती है, लेकिन सटीक मात्रा मृदा परीक्षण लैब से बफर pH जांच के बाद ही तय करें।"
                         )
                     else:
                         summary = (
-                            f"The current measured soil pH is {ph_val}, indicating acidic soil conditions. "
-                            "In acidic soils, phosphorus bioavailability is restricted. Agricultural lime may be required to neutralize acidity, "
-                            "but exact dosage must be based on a certified laboratory buffer-pH test. Incorporating organic compost helps improve buffering capacity."
+                            f"The measured soil pH is {ph_val}, indicating acidic conditions. "
+                            "Agricultural lime may be required based on certified lab buffer-pH testing."
                         )
                 else:
                     if is_hindi:
                         summary = (
-                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो क्षारीय (Alkaline) स्तर दर्शाता है। "
-                            "क्षारीय या सोदिक मिट्टी में सूक्ष्म पोषक तत्वों की उपलब्धता घटती है। सुधार के लिए कृषि जिप्सम (Agricultural Gypsum) और हरी खाद (ढैंचा) उपयोगी होती है, "
-                            "लेकिन जिप्सम की मात्रा लैब से विनिमयशील सोडियम प्रतिशत (ESP) जांच के आधार पर ही तय करें।"
+                            f"मिट्टी का वर्तमान pH मान {ph_val} है, जो क्षारीय स्तर दर्शाता है। "
+                            "सुधार के लिए कृषि जिप्सम और ढैंचा की हरी खाद उपयोगी है, पर जिप्सम की मात्रा लैब से ESP जांच के आधार पर ही तय करें।"
                         )
                     else:
                         summary = (
-                            f"The current measured soil pH is {ph_val}, indicating alkaline conditions. "
-                            "Alkaline conditions can induce micronutrient deficiencies. Agricultural gypsum and green manuring can assist in reclamation, "
-                            "but gypsum requirements must be determined strictly through certified soil testing for exchangeable sodium percentage (ESP)."
+                            f"The measured soil pH is {ph_val}, indicating alkaline conditions. "
+                            "Gypsum application and green manuring assist reclamation, with gypsum dosage determined by laboratory ESP testing."
                         )
 
         elif detected_topic == "fertilizer_quantity":
@@ -297,15 +289,15 @@ class CropSymptomAgent(BaseAgent):
             crop_label_en = f"{detected_crop} or any crop" if detected_crop else "crops"
             if is_hindi:
                 summary = (
-                    f"{crop_label_hi} के लिए बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया और डीएपी की निश्चित मात्रा तय करना वैज्ञानिक रूप से सुरक्षित नहीं है। "
-                    "सिद्धांततः डीएपी बुवाई के समय बेसल डोज के रूप में जड़ों के विकास के लिए दिया जाता है, जबकि यूरिया को 2 से 3 भागों में बांटकर (बुवाई, पहली सिंचाई/CRI, और कल्ले फूटते समय) दिया जाता है ताकि लीचिंग न हो। "
-                    "सटीक मात्रा की सिफारिश के लिए कृपया अपनी फसल का नाम, फसल की अवस्था (बुवाई या सिंचाई) और खेत का क्षेत्रफल बताएं।"
+                    f"{crop_label_hi} के लिए बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया या डीएपी की निश्चित खुराक तय करना सही नहीं है। "
+                    "डीएपी बुवाई के समय बेसल डोज में दें, और यूरिया को 2-3 बार में बांटकर (बुवाई, पहली सिंचाई व कल्ले फूटते समय) डालें। "
+                    "सटीक मात्रा के लिए कृपया अपनी फसल, वर्तमान अवस्था और खेत का क्षेत्रफल बताएं।"
                 )
             else:
                 summary = (
-                    f"Prescribing a fixed universal dosage of Urea and DAP for {crop_label_en} without knowing the crop growth stage and soil test results is agronomically unsafe. "
-                    "Agronomically, DAP is applied at sowing as a basal dose for early root architecture development, while Urea is split into 2-3 applications (at sowing, CRI/first irrigation, and tillering) to avoid nitrogen leaching. "
-                    "To provide an accurate recommendation, please specify: which crop are you growing, its current growth stage, and your plot size or soil-test report."
+                    f"Prescribing a fixed fertilizer dose for {crop_label_en} without knowing crop stage and soil-test values is agronomically unsafe. "
+                    "Apply DAP as a basal dose at sowing for roots, and split Urea into 2–3 top dressings (sowing, first irrigation, tillering). "
+                    "Please share your crop name, growth stage, and plot size for an exact recommendation."
                 )
 
         elif detected_topic == "ph":

@@ -125,37 +125,36 @@ class IrrigationAdvisoryAgent(BaseAgent):
             eval_m_str = f"{query_specified_moisture:.0f}%" if query_specified_moisture is not None else "40%"
             if is_hindi:
                 summary = (
-                    f"मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन केवल गेहूं, कपास, टमाटर और सरसों के हैं)। "
-                    f"आपके द्वारा बताई गई {eval_m_str} नमी की रीडिंग किसान-प्रदत्त है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
-                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट), सेंसर की गहराई और फसल की अवस्था पर निर्भर करता है। "
-                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) की क्रांतिक अवस्थाओं पर नमी की कमी सबसे अधिक नुकसानदायक होती है। "
-                    "जलभराव से बचते हुए हल्की सिंचाई करें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान वृद्धि अवस्था बताएं।"
+                    f"मक्का आपके पंजीकृत सेंसर ज़ोन में नहीं है, इसलिए {eval_m_str} नमी किसान-प्रदत्त रीडिंग है। "
+                    "केवल नमी प्रतिशत से सिंचाई तय नहीं हो सकती; यह मिट्टी की बनावट और फसल अवस्था पर निर्भर करता है। "
+                    "मंजर और सिल्क निकलते समय नमी की कमी न होने दें, पर जलभराव से बचें। "
+                    "सटीक सलाह के लिए कृपया मिट्टी का प्रकार और फसल अवस्था बताएं।"
                 )
             else:
                 summary = (
-                    f"Maize is not registered in any monitored sensor zone on your farm (registered zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
-                    f"The queried {eval_m_str} soil moisture represents farmer-provided input rather than calibrated on-farm telemetry. "
-                    "A moisture percentage alone cannot definitively dictate irrigation without establishing soil texture, sensor depth, root-zone depth, and crop growth stage. "
-                    "Moisture stress is most damaging during flowering stages—tasseling and silking/grain filling—while ensuring proper furrow drainage as maize is intolerant of standing water. "
-                    "To provide accurate guidance, please share your soil texture and current crop growth stage."
+                    f"Maize is not registered in any monitored sensor zone on your farm, so {eval_m_str} moisture is farmer-provided. "
+                    "Moisture percentage alone cannot dictate irrigation without knowing soil texture and growth stage. "
+                    "Maintain adequate soil moisture during critical flowering (tasseling and silking) while avoiding waterlogging. "
+                    "Please share your soil texture and crop stage for specific guidance."
                 )
 
         elif is_first_irrigation and ("wheat" in query_lower or "गेहूं" in context.query or "गेहु" in context.query or "wheat" in crop.lower()):
             moist_str = f"{moisture:.1f}%" if moisture is not None else "उपलब्ध नहीं"
+            age_match = re.search(r"(\d+)\s*(?:दिन|दिनों|days|day)", context.query, re.IGNORECASE)
+            crop_age_hi = f" आपकी फसल {age_match.group(1)} दिन की है।" if age_match else ""
+            crop_age_en = f" Your crop is at {age_match.group(1)} days." if age_match else ""
             if is_hindi:
                 summary = (
-                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
-                    "हालांकि, यह समय बुवाई की गहराई, तापमान और किस्म के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार, क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
-                    f"फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) की मिट्टी की नमी {moist_str} है। "
-                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें।"
+                    f"गेहूं में पहली सिंचाई 'ताज मूल अवस्था' (CRI) पर की जाती है, जो बुवाई के 20-25 दिन बाद आती है।{crop_age_hi} "
+                    "ताज जड़ों की वृद्धि और ऊपरी मिट्टी देखें; यदि मिट्टी सूखी हो तो हल्की सिंचाई करें। "
+                    f"वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी {moist_str} है।"
                 )
             else:
                 moist_en = f"{moisture:.1f}%" if moisture is not None else "unavailable"
                 summary = (
-                    "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
-                    "However, exact timing varies with sowing depth, ambient temperature, variety, and initial seedbed moisture. Agronomic literature indicates that severe moisture deficit during crown root formation may risk potential yield penalties of up to 30% to 40%. "
-                    f"While FertoBot sensors monitor soil moisture (currently {moist_en} in Zone 1 Wheat), they do not track calendar sowing dates. "
-                    "Inspect the crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation."
+                    f"In wheat, the first irrigation is scheduled at Crown Root Initiation (CRI), usually 20-25 days after sowing.{crop_age_en} "
+                    "Check crown root growth and topsoil; apply a light irrigation if topsoil is dry. "
+                    f"Current soil moisture in Zone 1 Wheat is {moist_en}."
                 )
 
         elif is_cotton_irrigation:

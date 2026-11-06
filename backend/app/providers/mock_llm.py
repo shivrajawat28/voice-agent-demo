@@ -76,80 +76,73 @@ class MockLLMProvider(BaseLLMProvider):
             if "unavailable" in lower or "missing" in lower or "उपलब्ध नहीं" in prompt or "अमान्य" in prompt:
                 if is_hindi:
                     return (
-                        "वर्तमान में इस खेत/ज़ोन के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है। "
-                        "बिना अधिकृत प्रयोगशाला परीक्षण के किसी रासायनिक सुधारक (जैसे चूना या जिप्सम) का उपयोग न करें। "
-                        "मिट्टी की संरचना व उर्वरता बनाए रखने के लिए गोबर की खाद या कम्पोस्ट का उपयोग एक सामान्य सलाह है, जिसकी निश्चित मात्रा मृदा स्वास्थ्य कार्ड से जांचें।"
+                        "वर्तमान में इस ज़ोन के लिए मिट्टी का वैध pH मान उपलब्ध नहीं है। "
+                        "बिना अधिकृत लैब टेस्ट के कृषि चूना या जिप्सम जैसे रासायनिक सुधारक न डालें। "
+                        "मिट्टी की उर्वरता के लिए सड़ी गोबर की खाद या कम्पोस्ट का उपयोग करें, जिसकी सटीक मात्रा मृदा स्वास्थ्य कार्ड से तय करें।"
                     )
                 return (
                     "A valid soil pH reading is currently unavailable for this zone. "
                     "Chemical soil amendments like lime or gypsum must never be applied without a certified laboratory soil test. "
-                    "General organic matter additions help maintain soil buffering, with quantitative rates determined by a Soil Health Card."
+                    "Incorporate well-decomposed organic manure or compost for general soil health, with precise rates guided by a Soil Health Card."
                 )
             if is_hindi:
                 return (
-                    "मिट्टी का वर्तमान pH मान 6.8 है जो अधिकांश फसलों के लिए आदर्श व तटस्थ (Neutral) स्तर है। "
-                    "इस pH पर किसी रासायनिक सुधारक (जैसे जिप्सम या चूना) की आवश्यकता नहीं है। "
-                    "मिट्टी की उर्वरता, जैविक कार्बन और संरचना को बनाए रखने के लिए अच्छी सड़ी गोबर की खाद (FYM) या कम्पोस्ट मिलाना एक सामान्य कृषि उपाय है। "
-                    "खाद की निश्चित मात्रा मिट्टी में जैविक कार्बन (Organic Carbon), फसल की किस्म और मिट्टी की बनावट पर निर्भर करती है, जिसके लिए मृदा स्वास्थ्य कार्ड की जांच करें। "
-                    "रासायनिक सुधारकों (जैसे चूना या जिप्सम) का प्रयोग केवल लैब टेस्ट में गंभीर अम्लता या क्षारीयता पाए जाने पर ही किया जाता है।"
+                    "मिट्टी का वर्तमान pH मान 6.8 है, जो अधिकांश फसलों के लिए आदर्श और तटस्थ स्तर है। "
+                    "इस pH पर चूना या जिप्सम जैसे रासायनिक सुधारक न डालें। "
+                    "मिट्टी की सेहत बनाए रखने के लिए सड़ी गोबर की खाद या कम्पोस्ट का सामान्य उपयोग करें। "
+                    "खाद की सटीक मात्रा मृदा स्वास्थ्य कार्ड व लैब परीक्षण अनुसार तय करें।"
                 )
             return (
                 "Current soil pH is 6.8, which is in the optimal near-neutral range for crops. "
-                "Chemical soil amendments such as lime or gypsum are not required at this pH level. "
-                "To maintain soil fertility and buffering capacity, incorporating well-decomposed organic manure or compost is recommended as general guidance. "
-                "Quantitative application rates depend on baseline soil organic carbon, soil texture, and crop requirements from a certified Soil Health Card. "
-                "Chemical amendments are only applied when verified by laboratory soil testing for acidic or alkaline conditions."
+                "Chemical amendments like lime or gypsum are not required at this pH. "
+                "Incorporate well-decomposed organic manure or compost for general soil health, with precise dosage based on Soil Health Card lab testing."
             )
 
         if is_fertilizer_quantity:
             if is_hindi:
                 return (
-                    "फसल के लिए बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया और डीएपी की निश्चित मात्रा तय करना वैज्ञानिक रूप से सुरक्षित नहीं है। "
-                    "सिद्धांततः डीएपी बुवाई के समय बेसल डोज के रूप में जड़ों के विकास के लिए दिया जाता है, जबकि यूरिया को 2 से 3 भागों में बांटकर दिया जाता है ताकि लीचिंग न हो। "
-                    "सटीक मात्रा की सिफारिश के लिए कृपया अपनी फसल का नाम, फसल की अवस्था और खेत का क्षेत्रफल बताएं।"
+                    "बिना मिट्टी परीक्षण और फसल अवस्था जाने यूरिया या डीएपी की निश्चित खुराक तय करना सही नहीं है। "
+                    "डीएपी बुवाई के समय बेसल डोज में दें, और यूरिया को 2-3 बार में बांटकर (बुवाई, पहली सिंचाई व कल्ले फूटते समय) डालें। "
+                    "सटीक मात्रा के लिए कृपया अपनी फसल, वर्तमान अवस्था और खेत का क्षेत्रफल बताएं।"
                 )
             return (
-                "Prescribing a fixed universal dosage of Urea and DAP without establishing crop growth stage and soil test results is agronomically unsafe. "
-                "Agronomically, DAP is applied at sowing as a basal dose for early root architecture development, while Urea is split into 2-3 applications to prevent nitrogen leaching. "
-                "To provide an accurate recommendation, please specify: which crop are you growing, its current growth stage, and your plot size or soil-test report."
+                "Prescribing a fixed fertilizer dose without knowing crop stage and soil-test values is agronomically unsafe. "
+                "Apply DAP as a basal dose at sowing for roots, and split Urea into 2–3 top dressings (sowing, first irrigation, tillering). "
+                "Please share your crop name, growth stage, and plot size for an exact recommendation."
             )
 
         if is_maize:
             if is_hindi:
                 return (
-                    "मक्का आपके खेत के पंजीकृत सेंसर ज़ोन में नहीं है (सेंसर ज़ोन गेहूं, कपास, टमाटर और सरसों के हैं)। "
-                    "आपके द्वारा बताई गई 40% नमी किसान-प्रदत्त रीडिंग है। केवल नमी के प्रतिशत से सिंचाई का पक्का निर्णय नहीं लिया जा सकता, "
-                    "क्योंकि यह मिट्टी की बनावट (हल्की बलुई या भारी दोमट) और फसल की अवस्था पर निर्भर करता है। "
-                    "मक्का में मंजर निकलने (tasseling) और सिल्क निकलने (silking) के समय नमी की कमी सर्वाधिक नुकसान पहुंचाती है। "
-                    "खेत में जलभराव बिल्कुल न होने दें। सटीक सलाह के लिए कृपया अपनी मिट्टी का प्रकार और मक्का की वर्तमान अवस्था बताएं।"
+                    "मक्का आपके पंजीकृत सेंसर ज़ोन में नहीं है, इसलिए 40% नमी किसान-प्रदत्त रीडिंग है। "
+                    "केवल नमी प्रतिशत से सिंचाई तय नहीं हो सकती; यह मिट्टी की बनावट और फसल अवस्था पर निर्भर करता है। "
+                    "मंजर और सिल्क निकलते समय नमी की कमी न होने दें, पर जलभराव से बचें। "
+                    "सटीक सलाह के लिए मिट्टी का प्रकार और फसल अवस्था बताएं।"
                 )
             return (
-                "Maize is not registered in any monitored sensor zone on your farm (farm zones: Zone 1 Wheat, Zone 2 Cotton, Zone 3 Tomato, Zone 4 Mustard). "
-                "The 40% soil moisture cited represents farmer-provided input rather than calibrated on-farm telemetry. "
-                "A moisture percentage alone cannot dictate irrigation without establishing soil texture, root-zone depth, and growth stage. "
-                "Moisture deficits are most critical during flowering stages—tasseling and silking—while ensuring proper furrow drainage as maize cannot tolerate standing water. "
-                "Please share your soil texture and crop stage for a specific recommendation."
+                "Maize is not registered in any monitored sensor zone on your farm, so 40% moisture is farmer-provided. "
+                "Moisture percentage alone cannot dictate irrigation without knowing soil texture and growth stage. "
+                "Maintain adequate soil moisture during critical flowering (tasseling and silking) while avoiding waterlogging. "
+                "Please share your soil texture and crop stage for specific guidance."
             )
 
         if is_wheat_first_irrigation:
             if is_hindi:
                 return (
-                    "गेहूं में पहली सिंचाई सामान्यतः 'ताज मूल अवस्था' (CRI - Crown Root Initiation) पर की जाती है, जो अनुकूल परिस्थितियों में प्रायः बुवाई के 20 से 25 दिन बाद आती है। "
-                    "हालांकि, यह समय बुवाई की गहराई और तापमान के अनुसार बदल सकता है। वैज्ञानिक अध्ययनों के अनुसार क्राउन जड़ें बनते समय गंभीर सूखे से पैदावार में 30 से 40 प्रतिशत तक की कमी का जोखिम हो सकता है। "
-                    "फ़र्टोबॉट सेंसर बुवाई की तारीख ट्रैक नहीं करते, लेकिन वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है। "
-                    "पौधों के आधार पर ताज जड़ों की जांच करें और यदि ऊपरी मिट्टी सूखी लगे तो हल्की सिंचाई करें।"
+                    "गेहूं में पहली सिंचाई 'ताज मूल अवस्था' (CRI) पर की जाती है, जो बुवाई के 20-25 दिन बाद आती है। "
+                    "ताज जड़ों की वृद्धि और ऊपरी मिट्टी देखें; यदि मिट्टी सूखी हो तो हल्की सिंचाई करें। "
+                    "वर्तमान में आपके गेहूं खेत (Zone 1) में मिट्टी की नमी 48.2% है।"
                 )
             return (
-                "In wheat, the first irrigation is typically scheduled at Crown Root Initiation (CRI), which under standard conditions generally occurs around 20 to 25 days after sowing (DAS). "
-                "However, exact timing varies with sowing depth, ambient temperature, and variety. Severe moisture deficit during crown root establishment risks potential yield penalties of up to 30% to 40% in literature. "
-                "While FertoBot sensors monitor soil moisture (currently 48.2% in Zone 1 Wheat), they do not track calendar sowing dates. "
-                "Inspect crown roots at the shoot base: if crown roots have initiated and the topsoil is dry, apply a light to moderate irrigation."
+                "In wheat, the first irrigation is scheduled at Crown Root Initiation (CRI), usually 20-25 days after sowing. "
+                "Check crown root growth and topsoil; apply a light irrigation if topsoil is dry. "
+                "Current soil moisture in Zone 1 Wheat is 48.2%."
             )
 
         if is_spray:
             if is_hindi:
-                return "वर्तमान मौसम विश्लेषण: हवा की गति 12 km/h है और अगले 24 घंटों में वर्षा की 65% संभावना है। अतः बारिश के कारण रासायनिक छिड़काव अभी स्थगित रखें।"
-            return "Weather analysis: Wind speed is 12 km/h with a 65% chance of rainfall in the next 24 hours. Foliar chemical spraying should be postponed due to wash-off risk."
+                return "हवा की गति 12 km/h है और अगले 24 घंटों में बारिश की 65% संभावना है। बारिश के कारण रासायनिक छिड़काव अभी स्थगित रखें।"
+            return "Wind speed is 12 km/h with a 65% chance of rain in the next 24 hours. Postpone chemical spraying to avoid wash-off."
 
         if is_symptom:
             if is_hindi:
@@ -352,9 +345,9 @@ class MockLLMProvider(BaseLLMProvider):
             if is_fert_dosage:
                 needs_clarification = True
                 clarification_prompt = (
-                    "सटीक सिफारिश के लिए कृपया अपनी फसल का नाम, फसल की अवस्था और खेत का क्षेत्रफल बताएं।"
+                    "सटीक मात्रा के लिए कृपया अपनी फसल, वर्तमान अवस्था और खेत का क्षेत्रफल बताएं।"
                     if is_hindi else
-                    "Please specify your crop species, current growth stage, and plot acreage for an accurate recommendation."
+                    "Please share your crop name, growth stage, and plot size for the exact dosage."
                 )
             elif not has_crop_in_context:
                 needs_clarification = True
